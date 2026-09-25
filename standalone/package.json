@@ -1,0 +1,51 @@
+{
+  "name": "pocket-ball",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "test:e2e": "playwright test",
+    "server": "tsx watch server/main.ts",
+    "server:start": "tsx server/main.ts",
+    "loadtest": "tsx scripts/loadtest.ts",
+    "gen-levels": "tsx scripts/generate-levels.ts",
+    "analytics": "tsx scripts/analytics-report.ts",
+    "build:server": "vite build --ssr server/main.ts --outDir dist-server",
+    "start": "node dist-server/main.js",
+    "build:portal": "tsx scripts/build-portal.ts",
+    "add-walls": "tsx scripts/add-walls.ts",
+    "build:pages": "VITE_PLATFORM=solo vite build --outDir dist-pages"
+  },
+  "dependencies": {
+    "@colyseus/core": "^0.18.16",
+    "@colyseus/redis-driver": "^0.18.3",
+    "@colyseus/redis-presence": "^0.18.5",
+    "@colyseus/schema": "^5.0.34",
+    "@colyseus/sdk": "^0.18.4",
+    "@colyseus/ws-transport": "^0.18.3",
+    "@dimforge/rapier3d-compat": "^0.20.0",
+    "express": "^5.2.1",
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.2",
+    "@types/three": "^0.186.0",
+    "eslint": "^10.11.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

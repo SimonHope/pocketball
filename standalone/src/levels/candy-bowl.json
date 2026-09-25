@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "name": "Candy Bowl",
+  "theme": "candy",
+  "kind": "arena",
+  "start": { "position": [0, 1, 10], "yaw": 0 },
+  "pieces": [
+    { "type": "pad", "center": [0, 0, 0], "w": 30, "d": 30, "palette": "purple" },
+    { "type": "bumper", "position": [-10, 0, 4] },
+    { "type": "bumper", "position": [10, 0, 4] },
+    { "type": "bumper", "position": [-10, 0, -10] },
+    { "type": "bumper", "position": [10, 0, -10] },
+    { "type": "sweeper", "position": [0, 0, -4], "length": 9, "speed": 0.8 },
+    { "type": "zone", "position": [0, 0, -4], "radius": 4 },
+    { "type": "zone", "position": [-8, 0, -3], "radius": 3 },
+    { "type": "zone", "position": [8, 0, -3], "radius": 3 }
+  ]
+}

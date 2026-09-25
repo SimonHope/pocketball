@@ -1,0 +1,17 @@
+# Production-like local setup: a gateway + 2 worker processes sharing matchmaking via Redis.
+#   docker compose up --build     then play at http://localhost:5173 (npm run dev) as usual.
+services:
+  redis:
+    image: redis:7-alpine
+  server:
+    build: .
+    ports: ["2567:2567"]
+    environment:
+      WORKERS: "2"
+      REDIS_URL: redis://redis:6379
+      SHOP_DEV: "1"   # local only: packs are granted without payment
+    volumes: ["pocket-ball-data:/data"]
+    depends_on: [redis]
+    stop_grace_period: 5m   # let running races finish
+volumes:
+  pocket-ball-data:

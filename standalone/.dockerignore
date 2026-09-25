@@ -1,0 +1,20 @@
+node_modules
+dist
+dist-server
+data
+test-results
+playwright-report
+e2e
+tests
+*.log
+# Secrets and local clutter never go into the image
+.env
+.env.*
+*.pem
+*.key
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+.git
+*.tmp.*

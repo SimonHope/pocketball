@@ -1,0 +1,20 @@
+{
+  "format": 1,
+  "name": "Night Summit",
+  "theme": "night",
+  "kind": "arena",
+  "start": { "position": [0, 1, 13], "yaw": 0 },
+  "pieces": [
+    { "type": "pad", "center": [0, 0, 0], "w": 36, "d": 36, "palette": "blue" },
+    { "type": "pad", "center": [0, 3, -4], "w": 10, "d": 10, "palette": "purple", "thickness": 3 },
+    { "type": "path", "from": [-14, 0, -4], "to": [-5, 3, -4], "width": 6, "palette": "orange" },
+    { "type": "path", "from": [14, 0, -4], "to": [5, 3, -4], "width": 6, "palette": "orange" },
+    { "type": "path", "from": [0, 0, 6], "to": [0, 3, 1], "width": 6, "palette": "orange" },
+    { "type": "bumper", "position": [-9, 0, 8] },
+    { "type": "bumper", "position": [9, 0, 8] },
+    { "type": "bumper", "position": [0, 0, -15] },
+    { "type": "zone", "position": [0, 3, -4], "radius": 3.5 },
+    { "type": "zone", "position": [-12, 0, -12], "radius": 3.5 },
+    { "type": "zone", "position": [12, 0, -12], "radius": 3.5 }
+  ]
+}

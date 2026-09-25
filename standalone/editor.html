@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pocket Ball Editor</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root { --panel: rgba(18, 32, 58, 0.92); --line: rgba(255,255,255,.12); --accent: #ff8c42; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #87c5ff; font: 13px system-ui, -apple-system, sans-serif; color: #fff; }
+      canvas { display: block; }
+      .bar { position: fixed; top: 0; left: 0; right: 0; height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); z-index: 2; }
+      .bar .title { font-weight: 800; font-size: 15px; margin-right: 10px; color: #ffd166; }
+      .bar .spacer { flex: 1; }
+      button { font: inherit; font-weight: 600; padding: 6px 10px; border-radius: 7px; border: 0; background: rgba(255,255,255,.12); color: #fff; cursor: pointer; }
+      button:hover { background: rgba(255,255,255,.22); }
+      button.primary { background: var(--accent); }
+      button.danger { background: #c0392b; }
+      button:disabled { opacity: .4; cursor: default; }
+      .side { position: fixed; top: 44px; bottom: 28px; width: 250px; overflow-y: auto; background: var(--panel); padding: 10px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; }
+      #left { left: 0; border-right: 1px solid var(--line); }
+      #right { right: 0; width: 290px; border-left: 1px solid var(--line); }
+      h3 { margin: 4px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; opacity: .6; }
+      .add-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+      .list { display: flex; flex-direction: column; gap: 2px; }
+      .list button { text-align: left; background: transparent; padding: 4px 8px; }
+      .list button.sel { background: rgba(255,140,66,.35); }
+      .list button:hover { background: rgba(255,255,255,.1); }
+      .field { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 6px; margin: 3px 0; }
+      .field input[type=number], .field input[type=text], .field select { width: 100%; box-sizing: border-box; font: inherit; padding: 3px 4px; border-radius: 5px; border: 1px solid var(--line); background: rgba(0,0,0,.25); color: #fff; }
+      .vec3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
+      .row { display: flex; gap: 4px; flex-wrap: wrap; }
+      #status { position: fixed; left: 0; right: 0; bottom: 0; height: 28px; line-height: 28px; padding: 0 10px; background: var(--panel); border-top: 1px solid var(--line); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      #status.ok { color: #7ee787; } #status.err { color: #ff7b72; }
+      .hint { opacity: .6; font-size: 11px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <div class="bar">
+      <span class="title">Pocket Ball Editor</span>
+      <button id="btn-new">New</button>
+      <button id="btn-open">Open…</button>
+      <button id="btn-save">Save .json</button>
+      <button id="btn-copy">Copy JSON</button>
+      <button id="btn-undo" title="Ctrl/Cmd+Z">Undo</button>
+      <button id="btn-redo" title="Ctrl/Cmd+Shift+Z">Redo</button>
+      <span class="spacer"></span>
+      <button id="btn-bot">Check with bot</button>
+      <button id="btn-play" class="primary">Playtest ▶</button>
+      <button id="btn-game">Back to game</button>
+      <input id="file" type="file" accept=".json,application/json" hidden />
+    </div>
+    <div id="left" class="side">
+      <h3>Add piece</h3>
+      <div class="add-grid" id="add-buttons"></div>
+      <h3>Pieces</h3>
+      <div class="list" id="piece-list"></div>
+      <h3>Route (bot / test path)</h3>
+      <div class="row"><button id="btn-add-wp">+ Waypoint</button></div>
+      <div class="list" id="route-list"></div>
+    </div>
+    <div id="right" class="side">
+      <h3 id="props-title">Level</h3>
+      <div id="props"></div>
+      <div class="row" id="sel-actions">
+        <button id="btn-dup" title="Ctrl/Cmd+D">Duplicate</button>
+        <button id="btn-del" class="danger" title="Delete">Delete</button>
+      </div>
+      <p class="hint">
+        Click a piece or waypoint to select it · drag the arrows to move (snaps to 0.5) · drag empty space to orbit, right-drag to pan, scroll to zoom ·
+        F focuses the selection · Esc deselects to edit level settings. Moving a piece moves all its points together.
+      </p>
+    </div>
+    <div id="status"></div>
+    <script type="module" src="/src/editor/main.ts"></script>
+  </body>
+</html>

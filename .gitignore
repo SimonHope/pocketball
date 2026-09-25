@@ -1,0 +1,58 @@
+# ---------- Dependencies ----------
+node_modules/
+
+# ---------- Build output ----------
+# Client (npm run build), server (build:server), single-player (build:pages), portals and zips
+dist/
+dist-*/
+dist-server/
+release/
+*.tsbuildinfo
+
+# ---------- Local data (player accounts, analytics) ----------
+# The SQLite database holds guest accounts, recovery-code hashes and analytics: never commit it.
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ---------- Secrets ----------
+# Stripe keys, webhook secrets, Redis URLs, etc. Set them as env vars / host secrets instead.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.fly/
+
+# ---------- Tests ----------
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+coverage/
+.vitest/
+
+# ---------- Tool caches ----------
+.vite/
+.eslintcache
+.npm/
+.cache/
+
+# ---------- Logs and scratch files ----------
+*.log
+npm-debug.log*
+*.tmp
+*.tmp.*
+
+# ---------- OS / editor ----------
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*~

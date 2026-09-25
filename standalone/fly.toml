@@ -1,0 +1,40 @@
+# Fly.io deploy for the game server:  fly launch --no-deploy (once), then fly deploy.
+# Secrets (fly secrets set …): REDIS_URL (e.g. Upstash Redis on Fly), STRIPE_SECRET_KEY,
+# STRIPE_WEBHOOK_SECRET. See ../docs/launch/deploy.md.
+app = "pocket-ball-server"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = "300s"          # rooms finish their current game before the machine stops
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "2567"
+  DATA_DIR = "/data"
+  WORKERS = "2"                # one worker per CPU; needs the REDIS_URL secret
+  PUBLIC_URL = "https://pocketball.example.com"
+
+[[mounts]]
+  source = "pocket_ball_data"      # SQLite lives here: this pins the app to one machine (see deploy.md)
+  destination = "/data"
+
+[http_service]
+  internal_port = 2567
+  force_https = true
+  auto_stop_machines = "off"   # rooms live in memory: never stop a machine with players on it
+  auto_start_machines = true
+  min_machines_running = 1
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 600
+    hard_limit = 800
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "15s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "3s"
+
+[[vm]]
+  size = "performance-2x"      # 2 dedicated CPUs, matches WORKERS

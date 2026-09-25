@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Pocket Ball</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root { --accent: #ff8c42; --accent-dark: #d96a1f; --panel: rgba(18, 32, 58, 0.82); --text: #fff; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #87c5ff; font-family: system-ui, -apple-system, sans-serif; color: var(--text); touch-action: none; user-select: none; -webkit-user-select: none; }
+      canvas { display: block; }
+      [hidden] { display: none !important; } /* never let a 'display: flex' rule un-hide something */
+
+      /* HUD */
+      #hud { position: fixed; inset: 0; pointer-events: none; text-shadow: 0 2px 4px rgba(0,0,0,.45); }
+      #hud.hidden { display: none; }
+      #timer { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); font-size: 40px; font-weight: 800; font-variant-numeric: tabular-nums; }
+      #best { position: absolute; top: 18px; right: 20px; font-size: 18px; font-weight: 600; }
+      #level { position: absolute; top: 18px; left: 20px; font-size: 18px; font-weight: 600; }
+      #cam { position: absolute; top: 44px; left: 20px; font-size: 14px; opacity: .8; text-transform: capitalize; }
+      #banner { position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%); font-size: 72px; font-weight: 900; text-align: center; transition: opacity .2s; }
+      #banner small { display: block; font-size: 22px; font-weight: 600; margin-top: 8px; white-space: pre-line; }
+      #help { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); font-size: 15px; opacity: .85; text-align: center; width: max-content; max-width: calc(100% - 180px); }
+      #help.hidden { display: none; }
+      #speed { position: absolute; bottom: 16px; right: 20px; font-size: 16px; font-variant-numeric: tabular-nums; }
+      #pause-btn { position: absolute; top: 60px; right: 16px; pointer-events: auto; width: 48px; height: 48px; border-radius: 50%; border: 0; background: rgba(0,0,0,.35); color: #fff; font-size: 20px; font-weight: 900; display: none; text-align: center; padding: 0; }
+      body.touch #pause-btn { display: block; }
+      body.touch #help { display: none; }
+
+      /* Touch joystick */
+      #stick { position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: rgba(255,255,255,.15); border: 2px solid rgba(255,255,255,.4); pointer-events: none; display: none; }
+      #stick-knob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%; background: rgba(255,255,255,.7); }
+
+      /* Screens */
+      .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(10, 20, 40, 0.25); padding: 16px; box-sizing: border-box; }
+      .screen.show { display: flex; }
+      #menu { background: linear-gradient(90deg, rgba(10,20,40,.55), rgba(10,20,40,0) 60%); justify-content: flex-start; padding-left: max(16px, 8vw); }
+      .panel { background: var(--panel); border-radius: 18px; padding: 28px 32px; min-width: 260px; max-width: 100%; max-height: 100%; overflow: auto; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+      .panel.wide { width: 720px; }
+      .logo { font-size: clamp(34px, 11vw, 56px); white-space: nowrap; font-weight: 900; margin: 0 0 8px; letter-spacing: -1px; color: #ffd166; text-shadow: 0 4px 0 #d96a1f, 0 8px 18px rgba(0,0,0,.35); }
+      h2 { margin: 0 0 4px; font-size: 28px; }
+      button { font: inherit; font-weight: 700; font-size: 18px; padding: 12px 20px; border-radius: 12px; border: 0; background: rgba(255,255,255,.12); color: #fff; cursor: pointer; text-align: left; }
+      button.primary { background: var(--accent); }
+      button:hover, button:focus-visible, button:focus { outline: 3px solid #ffd166; outline-offset: 2px; }
+      button.primary:hover { background: var(--accent-dark); }
+      .level-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+      .level-card { display: flex; flex-direction: column; gap: 6px; padding: 12px; min-height: 110px; }
+      .level-card .map { width: 100%; aspect-ratio: 16 / 10; border-radius: 10px; background: rgba(10, 20, 40, .35); }
+      .level-card .mechanics { font-size: 12px; font-weight: 700; color: #ffd166; }
+      .level-card .tag { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 99px; background: #ffd166; color: #1b1b1b; opacity: 1; }
+      .level-grid .level-group { grid-column: 1 / -1; margin: 8px 0 0; }
+      .level-card .num { font-size: 13px; opacity: .7; }
+      .level-card .name { font-size: 20px; }
+      .level-card .best { font-size: 14px; font-weight: 600; opacity: .9; }
+      .medal { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: 13px; font-weight: 800; color: #1b1b1b; width: fit-content; }
+      .medal.gold { background: #ffd166; } .medal.silver { background: #d9dee6; } .medal.bronze { background: #e0a17a; } .medal.none { background: rgba(255,255,255,.2); color: #fff; }
+      .big-time { font-size: 56px; font-weight: 900; font-variant-numeric: tabular-nums; }
+      .targets { font-size: 14px; opacity: .85; display: flex; gap: 14px; flex-wrap: wrap; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; }
+      .row button { flex: 1; text-align: center; }
+      label.setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-weight: 600; }
+      label.setting input[type=range] { width: 160px; }
+      label.setting select { font: inherit; padding: 6px 8px; border-radius: 8px; }
+      #loading .panel { align-items: center; }
+      .hint { font-size: 13px; opacity: .7; }
+
+      /* Multiplayer */
+      #positions { position: absolute; top: 72px; left: 20px; display: flex; flex-direction: column; gap: 3px; font-size: 15px; font-weight: 700; }
+      #positions .pos { display: flex; align-items: center; gap: 8px; padding: 2px 10px 2px 6px; border-radius: 99px; background: rgba(10,20,40,.35); width: fit-content; }
+      #positions .pos.me { background: rgba(255,140,66,.55); }
+      .dot { width: 12px; height: 12px; border-radius: 50%; flex: none; box-shadow: 0 0 0 2px rgba(255,255,255,.5); }
+      #stats { position: fixed; bottom: 8px; left: 8px; font: 12px ui-monospace, monospace; background: rgba(0,0,0,.55); padding: 4px 8px; border-radius: 6px; pointer-events: none; z-index: 5; white-space: pre; }
+      .consent { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 6; display: flex; gap: 10px; align-items: center; background: var(--panel); padding: 10px 14px; border-radius: 12px; font-size: 14px; max-width: calc(100% - 32px); box-sizing: border-box; flex-wrap: wrap; justify-content: center; }
+      .consent a, .legal a { color: #ffd166; }
+      .consent button { padding: 6px 14px; font-size: 14px; }
+      .legal { font-size: 12px; opacity: .7; }
+      #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(10,20,40,.85); padding: 10px 18px; border-radius: 99px; font-weight: 700; display: none; z-index: 5; }
+      #toast.show { display: block; }
+      .name-row { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 800; }
+      .name-row button { padding: 6px 12px; font-size: 16px; }
+      .join-row { display: flex; gap: 8px; }
+      .join-row input { font: inherit; font-size: 22px; font-weight: 800; letter-spacing: .2em; text-transform: uppercase; width: 9ch; padding: 8px 12px; border-radius: 10px; border: 0; }
+      .code { font-size: 44px; font-weight: 900; letter-spacing: .15em; color: #ffd166; }
+      .players { display: flex; flex-direction: column; gap: 6px; min-width: 300px; }
+      .players .p { display: flex; align-items: center; gap: 10px; font-weight: 700; }
+      .players .p .tag { margin-left: auto; font-size: 13px; opacity: .85; }
+      .players .p .tag.ok { color: #7ee787; }
+      .results-table { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 14px; align-items: center; font-weight: 700; font-size: 18px; }
+      .results-table .me { color: #ffd166; }
+      .err { color: #ff8a80; min-height: 1.2em; font-weight: 600; }
+      #customize { justify-content: flex-end; background: linear-gradient(270deg, rgba(10,20,40,.55), rgba(10,20,40,0) 60%); }
+      .panel.customize { width: 520px; gap: 8px; }
+      .panel h3 { margin: 6px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; opacity: .7; }
+      .choices { display: flex; flex-wrap: wrap; gap: 6px; }
+      .choices button { font-size: 14px; padding: 7px 12px; display: flex; align-items: center; gap: 6px; }
+      .choices button.sel { background: var(--accent); }
+      .profile-chip { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 15px; }
+      .profile-chip .lvl { background: #ffd166; color: #1b1b1b; border-radius: 99px; padding: 2px 10px; }
+      .xpbar { flex: 1; min-width: 80px; height: 8px; border-radius: 99px; background: rgba(255,255,255,.15); overflow: hidden; }
+      .xpbar > div { height: 100%; background: linear-gradient(90deg, #ffd166, #ff8c42); }
+      .challenges { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+      .challenges .c { display: flex; justify-content: space-between; gap: 12px; opacity: .9; }
+      .challenges .c.done { color: #7ee787; }
+      .rewards { display: flex; flex-direction: column; gap: 4px; font-size: 15px; font-weight: 700; }
+      .rewards .big { font-size: 20px; color: #ffd166; }
+      .rewards .lvlup { color: #7ee787; }
+      .board { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 14px; font-weight: 700; min-width: 320px; }
+      .board .me { color: #ffd166; }
+      .pack { display: flex; flex-direction: column; gap: 8px; padding: 14px; border-radius: 12px; background: rgba(255,255,255,.08); }
+      .pack .price { font-size: 22px; font-weight: 900; color: #ffd166; }
+      .choices button.locked { opacity: .75; }
+      .choices button .req { font-size: 11px; opacity: .85; background: rgba(0,0,0,.3); border-radius: 99px; padding: 1px 7px; }
+      .code-box { font: 800 20px ui-monospace, monospace; letter-spacing: .1em; color: #ffd166; }
+      .swatch { width: 14px; height: 14px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.5); display: inline-block; }
+    </style>
+  </head>
+  <body>
+    <div id="hud" class="hidden">
+      <div id="level"></div>
+      <div id="timer">0.00</div>
+      <div id="best"></div>
+      <div id="banner"></div>
+      <div id="speed"></div>
+      <div id="cam"></div>
+      <div id="positions"></div>
+      <button id="pause-btn" aria-label="Pause">II</button>
+      <div id="help">WASD / Arrows / Stick: roll &nbsp;·&nbsp; Q / E / drag / right stick: camera &nbsp;·&nbsp; C: camera mode &nbsp;·&nbsp; R: restart &nbsp;·&nbsp; Backspace: last checkpoint &nbsp;·&nbsp; Esc: pause</div>
+    </div>
+    <div id="stick"><div id="stick-knob"></div></div>
+    <div id="toast"></div>
+    <div id="stats" hidden></div>
+    <div id="consent" class="consent" hidden>
+      <span>Pocket Ball collects <b>anonymous</b> stats (no names, emails or ad tracking) to make the game better. <a href="privacy.html" target="_blank">Privacy</a></span>
+      <button class="primary" id="consent-yes">OK</button>
+      <button id="consent-no">No thanks</button>
+    </div>
+
+    <div id="loading" class="screen show">
+      <div class="panel"><div class="logo">Pocket Ball</div><div>Loading…</div></div>
+    </div>
+
+    <div id="menu" class="screen">
+      <div class="panel">
+        <div class="logo">Pocket Ball</div>
+        <div class="profile-chip" id="profile-chip"></div>
+        <button class="primary" data-action="quick">Quick Play</button>
+        <button data-action="play">Solo</button>
+        <button data-action="multiplayer">Play with friends</button>
+        <button data-action="customize">Customize</button>
+        <button data-action="shop">Shop</button>
+        <button data-action="editor">Level Editor</button>
+        <button data-action="settings">Settings</button>
+        <div class="challenges" id="challenges"></div>
+        <div class="hint">Keyboard, gamepad, or touch</div>
+        <div class="legal"><a href="privacy.html" target="_blank">Privacy</a> · <a href="terms.html" target="_blank">Terms</a></div>
+      </div>
+    </div>
+
+    <div id="levels" class="screen">
+      <div class="panel wide">
+        <h2>Choose a course</h2>
+        <div id="level-list" class="level-grid"></div>
+        <button data-action="back">Back</button>
+      </div>
+    </div>
+
+    <div id="pause" class="screen">
+      <div class="panel">
+        <h2>Paused</h2>
+        <button class="primary" data-action="resume">Resume</button>
+        <button data-action="restart">Restart</button>
+        <button data-action="settings">Settings</button>
+        <button data-action="quit">Quit to menu</button>
+      </div>
+    </div>
+
+    <div id="results" class="screen">
+      <div class="panel">
+        <h2 id="result-title">Finish!</h2>
+        <div id="result-time" class="big-time"></div>
+        <div id="result-medal"></div>
+        <div id="result-best"></div>
+        <div id="result-targets" class="targets"></div>
+        <div id="result-rewards" class="rewards"></div>
+        <div class="row">
+          <button class="primary" data-action="next">Next course</button>
+          <button data-action="retry">Retry</button>
+        </div>
+        <div class="row">
+          <button data-action="adDouble" id="btn-ad-double" hidden>📺 Double coins</button>
+          <button data-action="leaderboard">🏆 Leaderboard</button>
+        </div>
+        <button data-action="menu">Menu</button>
+      </div>
+    </div>
+
+    <div id="mp" class="screen">
+      <div class="panel">
+        <h2>Play with friends</h2>
+        <div class="name-row"><span class="dot" id="mp-dot"></span><span id="mp-name"></span><button data-action="reroll" aria-label="New name">🎲 New name</button></div>
+        <button class="primary" data-action="create">Create a room</button>
+        <div class="hint">…or join a friend's room with their code:</div>
+        <div class="join-row"><input id="mp-code" maxlength="6" placeholder="CODE" autocomplete="off" spellcheck="false" /><button data-action="join">Join</button></div>
+        <div class="err" id="mp-error"></div>
+        <button data-action="back">Back</button>
+      </div>
+    </div>
+
+    <div id="lobby" class="screen">
+      <div class="panel">
+        <h2 id="lobby-title">Quick Play</h2>
+        <div id="lobby-code-block">
+          <div class="hint">Room code — share it with friends</div>
+          <div class="row" style="align-items:center"><span class="code" id="lobby-code"></span><button data-action="copy" style="flex:none">Copy invite link</button></div>
+        </div>
+        <div class="players" id="lobby-players"></div>
+        <label class="setting">Mode <select id="lobby-mode"></select><span id="lobby-mode-name"></span></label>
+        <div class="hint" id="lobby-mode-blurb"></div>
+        <label class="setting">Course <select id="lobby-level"></select><span id="lobby-level-name"></span></label>
+        <div class="row">
+          <button class="primary" data-action="ready" id="lobby-ready">I'm ready</button>
+          <button class="primary" data-action="start" id="lobby-start">Start race</button>
+        </div>
+        <div class="hint" id="lobby-hint"></div>
+        <div class="row">
+          <button data-action="reroll">🎲 New name</button>
+          <button data-action="back">Leave room</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="mp-results" class="screen">
+      <div class="panel">
+        <h2 id="mp-results-title">Results</h2>
+        <div class="results-table" id="mp-results-table"></div>
+        <div id="mp-results-rewards" class="rewards"></div>
+        <button class="primary" data-action="lobby" id="mp-results-lobby">Back to lobby</button>
+        <div class="hint" id="mp-results-hint"></div>
+        <button data-action="back">Leave room</button>
+      </div>
+    </div>
+
+    <div id="customize" class="screen">
+      <div class="panel wide customize">
+        <h2>Customize your hamster</h2>
+        <div class="hint">Your ball in the background shows your changes.</div>
+        <h3>Ball</h3><div class="choices" id="choose-skin"></div>
+        <h3>Hat</h3><div class="choices" id="choose-hat"></div>
+        <h3>Fur</h3><div class="choices" id="choose-fur"></div>
+        <h3>Trail</h3><div class="choices" id="choose-trail"></div>
+        <button data-action="back">Done</button>
+      </div>
+    </div>
+
+    <div id="leaderboard" class="screen">
+      <div class="panel">
+        <h2 id="board-title">Leaderboard</h2>
+        <div class="board" id="board-list"></div>
+        <div class="hint" id="board-me"></div>
+        <button data-action="back">Back</button>
+      </div>
+    </div>
+
+    <div id="shop" class="screen">
+      <div class="panel">
+        <h2>Shop</h2>
+        <div class="hint">Cosmetics only — nothing here makes you faster. Everything else unlocks by playing.</div>
+        <div id="shop-packs"></div>
+        <div class="err" id="shop-error"></div>
+        <button data-action="back">Back</button>
+      </div>
+    </div>
+
+    <div id="settings" class="screen">
+      <div class="panel">
+        <h2>Settings</h2>
+        <label class="setting">Volume <input type="range" id="set-volume" min="0" max="1" step="0.05" /></label>
+        <label class="setting">Camera
+          <select id="set-camera"><option value="dynamic">Dynamic (chase)</option><option value="fixed">Fixed</option><option value="top">Top-down</option></select>
+        </label>
+        <label class="setting">Camera sensitivity <input type="range" id="set-sens" min="0.4" max="2" step="0.1" /></label>
+        <label class="setting">Graphics
+          <select id="set-quality"><option value="auto">Auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low (fastest)</option></select>
+        </label>
+        <label class="setting">Show controls hint <input type="checkbox" id="set-help" /></label>
+        <div id="account-settings" style="display: contents">
+        <h3>Your progress</h3>
+        <div class="hint">Playing on another device? Use this code there to bring your progress along. Keep it secret.</div>
+        <div class="row" style="align-items:center"><span class="code-box" id="recovery-code">—</span><button data-action="copyCode" style="flex:none">Copy</button></div>
+        <div class="join-row"><input id="restore-code" maxlength="14" placeholder="XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" style="width:16ch" /><button data-action="restore">Restore</button></div>
+        <div class="err" id="restore-msg"></div>
+        <label class="setting">Share anonymous stats <input type="checkbox" id="set-analytics" /></label>
+        <button data-action="deleteData">Delete my data</button>
+        </div>
+        <div class="legal"><a href="privacy.html" target="_blank">Privacy policy</a> · <a href="terms.html" target="_blank">Terms</a></div>
+        <button data-action="back">Back</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
