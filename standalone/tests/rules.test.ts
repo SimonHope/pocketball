@@ -15,14 +15,14 @@ const LATENCY = 40;
 interface Trace { updates: BallUpdate[]; finishTime: number }
 
 /** An honest player's updates: the autopilot racing, sampled at 20 Hz like the real client. */
-async function honestTrace(index: number): Promise<Trace> {
+async function honestTrace(index: number, route: 'main' | 'stars' = 'main'): Promise<Trace> {
   const sim = await makeSim(LEVELS[index]);
   skipCountdown(sim);
-  const pilot = new Autopilot(sim);
+  const pilot = new Autopilot(sim, 16, { route });
   const updates: BallUpdate[] = [{ t: START_AT - 20, p: sim.position(), v: sim.velocity() }];
   let steps = 0;
   const finished = () => sim.phase === 'finished'; // (a call, so TS doesn't narrow across steps)
-  while (!finished() && steps < 120 * 120) {
+  while (!finished() && steps < 150 * 120) {
     sim.step(pilot.input());
     sim.drainEvents();
     steps++;
@@ -55,6 +55,16 @@ describe('MoveChecker: honest players', () => {
     const finish = results.find((r) => r.ok && r.finishTime !== undefined);
     expect(finish && finish.ok && finish.finishTime).toBeCloseTo(traces[i].finishTime, 1);
     expect(checker.reached.every(Boolean)).toBe(true);
+  });
+
+  it.each(LEVELS.map((l, i) => [l.name, i]))('%s: a player taking the risky lines for the stars passes too', async (_n, i) => {
+    const trace = await honestTrace(i, 'stars');
+    const checker = new MoveChecker(levels[i], START_AT);
+    const results = feed(checker, trace.updates);
+    const rejected = results.filter((r) => !r.ok);
+    expect(rejected, JSON.stringify(rejected[0])).toEqual([]);
+    const finish = results.find((r) => r.ok && r.finishTime !== undefined);
+    expect(finish && finish.ok && finish.finishTime).toBeCloseTo(trace.finishTime, 1);
   });
 
   it('allows respawning at the start or a reached checkpoint', () => {

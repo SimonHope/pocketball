@@ -9,7 +9,7 @@ import { drawCourseMap } from './render/course-map';
 import { THEMES } from './levels/themes';
 import { formatTime, Hud } from './render/hud';
 import { Controls, type InputMode } from './render/input';
-import { bestTime, medalFor, recordTime, type Medal } from './render/progress';
+import { bestTime, medalFor, recordStars, recordTime, starsFound, type Medal } from './render/progress';
 import { applyTheme, createStage } from './render/scene';
 import { DRAFT_KEY, load } from './render/storage';
 import { SettingsStore } from './render/settings';
@@ -21,13 +21,16 @@ import { Autopilot } from './sim/autopilot';
 import { initPhysics, type SimEvent } from './sim/simulation';
 import { Screens, type ScreenId } from './ui/screens';
 import { CATALOG, ownedLook, owns, unlockOf, type Category } from './cosmetics';
-import { courseDrop, courseMechanics, levelId } from './levels';
+import { courseDrop, courseMechanics, levelId, withoutStars } from './levels';
 import type { SoloResult } from './meta/api';
 import { Account } from './meta/client';
 import { Analytics, forgetAnonId } from './platform/analytics';
 import { detectPlatform } from './platform/platform';
 import { renderLeaderboard, renderProfile, renderRewards, renderShop } from './ui/progress';
 import { toast } from './ui/toast';
+import { FeedbackForm } from './ui/feedback-form';
+import { levelVersion, RunRecorder, type Feedback } from './meta/feedback';
+import { exportFeedback, hasRated, keepEvent, playtestMode, ratingCount } from './render/feedback-store';
 
 await initPhysics();
 
@@ -42,6 +45,12 @@ const toEditor = () => { location.href = `${import.meta.env.BASE_URL}editor.html
 // ---------- Setup ----------
 /** Single-player build (GitHub Pages etc.): no server, so no accounts, multiplayer, shop or stats. */
 const SOLO = import.meta.env.VITE_PLATFORM === 'solo';
+/** `?playtest`: ask for course feedback after every finish and quit (see render/feedback-store.ts). */
+const PLAYTEST = playtestMode();
+document.getElementById('playtest-tag')!.hidden = !PLAYTEST;
+/** What happens on the player's runs (falls, splits, stars), for course feedback. */
+const recorder = new RunRecorder();
+const feedbackForm = new FeedbackForm();
 const settings = new SettingsStore();
 let look = loadLook();
 const analytics = new Analytics();
@@ -143,6 +152,7 @@ function createSession(data: LevelData): RaceSession {
   cameraOverride = data.camera === 'topdown' ? 'top' : null;
   applyCameraMode();
   hud.setLevel(session.level.name);
+  hud.setStars(session.sim.stars);
   return session;
 }
 
@@ -153,6 +163,7 @@ function loadLevel(index: number, asDemo: boolean) {
   demo = asDemo ? new Autopilot(session.sim) : null;
   hud.setBest(bestTime(session.level.name));
   restartRace();
+  recorder.reset(); // a new course: no restarts yet
 }
 
 function restartRace() {
@@ -160,6 +171,7 @@ function restartRace() {
   clearTimeout(resultsTimer);
   testPilot = null;
   s.restart();
+  recorder.reset(true);
   if (demo) {
     demo = new Autopilot(s.sim);
     while (s.sim.phase === 'countdown') s.sim.step({ x: 0, z: 0 }); // bots don't wait
@@ -169,13 +181,29 @@ function restartRace() {
   rig.snap(s.follow(), s.sim.spawn.yaw);
   s.ballView.faceYaw(s.sim.spawn.yaw);
   hud.hideBanner();
+  hud.setStars(s.sim.stars);
   handle(s.sim.drainEvents());
 }
 
 // ---------- Mode changes ----------
 function showMenu() {
   if (draft) return toEditor();
-  if (mode === 'playing' || mode === 'paused') analytics.track('level_quit', { level: levelId(current().data), time: current().sim.elapsed });
+  if (mode === 'playing' || mode === 'paused') {
+    const s = current(), props = runProps();
+    analytics.track('level_quit', { ...props, time: s.sim.elapsed });
+    keepEvent('level_quit', props);
+    if (PLAYTEST && s.sim.phase === 'playing') {
+      // Playtests: ask why they stopped, then on to the menu.
+      platform.gameplayStop();
+      mode = 'paused';
+      hud.setVisible(false);
+      return askFeedback(true, toMenu);
+    }
+  }
+  toMenu();
+}
+
+function toMenu() {
   platform.gameplayStop();
   mode = 'menu';
   document.querySelector<HTMLElement>('#pause [data-action=restart]')!.hidden = false;
@@ -200,7 +228,7 @@ function pause() {
 }
 
 function resume() {
-  if (mode !== 'paused') return;
+  if (mode !== 'paused' || screens.current === 'feedback') return;
   platform.gameplayStart();
   mode = 'playing';
   screens.show(null);
@@ -221,7 +249,7 @@ const mp = new Multiplayer({
   rename: (name) => void account.rename(name),
   onRewards: () => void account.refresh(),
   track: (name, props) => analytics.track(name, props),
-  loadSession: (data) => createSession(data),
+  loadSession: (data) => createSession(withoutStars(data)), // stars are a solo thing (for now)
   session: current,
   setActive: (active) => {
     if (active) {
@@ -323,9 +351,11 @@ screens.on('results', {
   menu: showMenu,
   leaderboard: () => void openLeaderboard('results'),
   adDouble: () => void watchAdForDouble(),
+  rate: () => askFeedback(false, () => screens.show('results')),
 });
 screens.on('settings', {
   back: () => screens.show(settingsReturn),
+  exportFeedback: () => exportFeedback(analytics.anonymousId),
   copyCode: () => {
     const code = account.recoveryCode;
     if (code) void navigator.clipboard.writeText(code).then(() => toast('Recovery code copied', 1500), () => toast(code, 5000));
@@ -420,7 +450,7 @@ function levelCard(level: LevelData, i: number): HTMLElement {
   map.className = 'map';
   map.width = 320;
   map.height = 200;
-  drawCourseMap(map, level);
+  drawCourseMap(map, level, starsFound(level.name));
   const tag = (text: string) => {
     const el = document.createElement('span');
     el.className = 'tag';
@@ -433,18 +463,51 @@ function levelCard(level: LevelData, i: number): HTMLElement {
   const mechanics = document.createElement('span');
   mechanics.className = 'mechanics';
   mechanics.textContent = courseMechanics(level).join(' · ');
+  const totalStars = level.pieces.filter((p) => p.type === 'star').length;
+  if (totalStars) {
+    const stars = document.createElement('span');
+    stars.className = 'stars';
+    stars.textContent = ` · ★ ${starsFound(level.name).size}/${totalStars}`;
+    bestEl.append(stars);
+  }
   card.append(map, num, name, ...(mechanics.textContent ? [mechanics] : []), bestEl, medalBadge(medalFor(best, level.medals)));
   card.addEventListener('click', () => startLevel(i));
   return card;
 }
 
-function showResults(time: number, isBest: boolean) {
-  const level = current().level;
+function showResults(time: number, isBest: boolean, newStars: number) {
+  const s = current();
+  const level = s.level;
   const best = bestTime(level.name);
   const medal = medalFor(time, level.medals);
   document.getElementById('result-title')!.textContent = medal ? 'Great run!' : 'Finish!';
   document.getElementById('result-time')!.textContent = formatTime(time);
   document.getElementById('result-medal')!.replaceChildren(medalBadge(medal));
+  const starsEl = document.getElementById('result-stars')!;
+  starsEl.replaceChildren();
+  if (level.stars.length) {
+    // One glyph per star on the course: bright if collected this run, faded if only on an
+    // earlier run, hollow if never; the note spells out this run versus the course total.
+    const total = level.stars.length;
+    const before = draft ? new Set<number>() : starsFound(level.name);
+    const found = s.sim.stars.filter((got, i) => got || before.has(i)).length;
+    const thisRun = s.sim.stars.filter(Boolean).length;
+    const glyphs = s.sim.stars.map((got, i) => {
+      const glyph = document.createElement('span');
+      glyph.textContent = got || before.has(i) ? '★' : '☆';
+      if (!got && before.has(i)) {
+        glyph.className = 'earlier';
+        glyph.title = 'Found on an earlier run';
+      }
+      return glyph;
+    });
+    const note = document.createElement('small');
+    const run = thisRun === total ? `All ${total} this run!${newStars ? ' 🎉' : ''}` : `This run: ${thisRun} / ${total}${newStars ? ` (${newStars} new)` : ''}`;
+    note.textContent = thisRun === total ? run
+      : found === total ? `${run} · all ${total} found on this course`
+      : `${run} · ${found} / ${total} found on this course — try the risky lines`;
+    starsEl.append(...glyphs, note);
+  }
   document.getElementById('result-best')!.textContent = isBest ? 'New personal best!' : `Best ${formatTime(best ?? time)}`;
   const m = level.medals;
   document.getElementById('result-targets')!.textContent = m
@@ -453,9 +516,46 @@ function showResults(time: number, isBest: boolean) {
   document.querySelector<HTMLElement>('#results [data-action=next]')!.hidden = levelIndex === playlist.length - 1;
   mode = 'results';
   hud.setVisible(false);
+  const rate = document.getElementById('btn-rate')!;
+  rate.hidden = !!draft;
+  rate.classList.toggle('primary', !draft && !hasRated(levelId(s.data), levelVersion(s.data)));
   screens.show('results');
   void showSoloRewards();
+  if (PLAYTEST && !draft) askFeedback(false, () => screens.show('results'));
 }
+
+// ---------- Course feedback ----------
+/** The course and this run, as sent with level_finish / level_quit / level_feedback. */
+function runProps() {
+  const s = current();
+  return { level: levelId(s.data), v: levelVersion(s.data), run: recorder.snapshot(s.sim.elapsed) };
+}
+
+let afterFeedback = () => {};
+/** Shows the feedback form (ratings, or `quit`: why they stopped); `then` runs on Send or Skip. */
+function askFeedback(quit: boolean, then: () => void) {
+  const s = current();
+  feedbackForm.open(s.data, recorder.snapshot(s.sim.elapsed), { quit, comment: PLAYTEST });
+  afterFeedback = then;
+  screens.show('feedback');
+}
+
+screens.on('feedback', {
+  send: () => {
+    const s = current();
+    const answers = feedbackForm.read();
+    if (Object.keys(answers).length) {
+      const fb: Feedback = { level: levelId(s.data), v: levelVersion(s.data), ...answers };
+      analytics.track('level_feedback', { ...fb });
+      keepEvent('level_feedback', { ...fb });
+      toast('Thanks for the feedback!', 1500);
+      document.getElementById('btn-rate')!.classList.remove('primary');
+    }
+    afterFeedback();
+  },
+  skip: () => afterFeedback(),
+  back: () => afterFeedback(),
+});
 
 /** Once the server has checked the run: rewards, rank, and the ad-double offer. */
 async function showSoloRewards() {
@@ -469,7 +569,7 @@ async function showSoloRewards() {
   }
   renderRewards(box, [], 'Checking your run…');
   const r = await pendingSolo;
-  if (screens.current !== 'results') return;
+  if (mode !== 'results') return; // moved on (the feedback form or leaderboard on top is fine)
   if ('error' in r) {
     renderRewards(box, [], `Not saved: ${r.error}`);
     return;
@@ -492,6 +592,9 @@ const form = {
 };
 form.analytics.addEventListener('change', () => answerConsent(form.analytics.checked));
 function syncSettingsForm() {
+  const ratings = ratingCount(), exportBtn = document.getElementById('btn-export-feedback')!;
+  exportBtn.hidden = !ratings && !PLAYTEST;
+  exportBtn.textContent = `📝 Export course feedback (${ratings})`;
   document.getElementById('recovery-code')!.textContent = account.online ? account.recoveryCode ?? '—' : 'offline';
   const s = settings.get();
   form.volume.value = String(s.volume);
@@ -540,6 +643,7 @@ function handle(events: SimEvent[]) {
   const s = current();
   const audible = !demo;
   for (const e of events) {
+    if (audible && mode !== 'mp' && e.type !== 'finish') recorder.event(e, s.sim);
     switch (e.type) {
       case 'countdown':
         if (!audible) break;
@@ -558,6 +662,21 @@ function handle(events: SimEvent[]) {
         sfx.checkpoint();
         hud.showBanner('Checkpoint!', '', 900);
         break;
+      case 'star': {
+        s.levelView.setStar(e.index, true);
+        if (!audible) break;
+        sfx.star();
+        hud.setStars(s.sim.stars);
+        hud.popStars();
+        const got = s.sim.stars.filter(Boolean).length;
+        hud.showBanner('★ Star!', `${got} / ${s.sim.stars.length}`, 900);
+        break;
+      }
+      case 'switch':
+        if (!audible) break;
+        sfx.click();
+        hud.showBanner('⏱ Star unlocked!', `${e.time} s: go!`, 1200);
+        break;
       case 'fall':
         rig.snap(s.follow(), s.sim.spawn.yaw);
         s.ballView.faceYaw(s.sim.spawn.yaw);
@@ -573,14 +692,18 @@ function handle(events: SimEvent[]) {
           break;
         }
         const isBest = recordTime(s.level.name, e.time);
+        const newStars = draft ? [] : recordStars(s.level.name, s.sim.stars);
         hud.setBest(bestTime(s.level.name));
         platform.gameplayStop();
-        analytics.track('level_finish', { level: levelId(s.data), time: e.time, medal: medalFor(e.time, s.level.medals) });
+        recorder.event(e, s.sim); // before the snapshot below (the loop records the rest after this switch)
+        const run = runProps();
+        analytics.track('level_finish', { ...run, time: e.time, medal: medalFor(e.time, s.level.medals), stars: s.sim.stars.filter(Boolean).length });
+        if (!draft) keepEvent('level_finish', run);
         // Built-in courses: send the run for the server to check (rewards, leaderboard).
         pendingSolo = !draft && account.online ? account.submitSolo(levelId(s.data), s.trace.slice()) : null;
         sfx.finish();
         hud.showBanner('FINISH!', formatTime(e.time), 1400);
-        resultsTimer = setTimeout(() => showResults(e.time, isBest), 1400);
+        resultsTimer = setTimeout(() => showResults(e.time, isBest, newStars.length), 1400);
         break;
       }
       case 'bump':
@@ -623,6 +746,7 @@ function handle(events: SimEvent[]) {
 const MAX_STEPS = 12;
 let accumulator = 0;
 let last = performance.now();
+let lastTick = 0; // whole seconds left on a switch star's timer, for the countdown ticks
 
 // `?stats`: FPS, frame time, draw calls and the graphics tier (for testers and bug reports).
 const statsEl = new URLSearchParams(location.search).has('stats') ? document.getElementById('stats')! : null;
@@ -654,6 +778,7 @@ function frame(now: number) {
     while (accumulator >= SIM.dt && steps < MAX_STEPS) {
       if (mode === 'mp') mp.beforeStep(s.sim);
       s.step(demo ? demo.input() : testPilot ? testPilot.input() : mode === 'mp' ? mp.input(controls.move()) : controls.move());
+      if (!demo && mode === 'playing') recorder.step(s.sim);
       handle(s.sim.drainEvents());
       accumulator -= SIM.dt;
       steps++;
@@ -678,6 +803,16 @@ function frame(now: number) {
   sun.position.set(rig.focus.x + 20, rig.focus.y + 35, rig.focus.z + 12); // keep shadows centered on the ball
   sun.target.position.copy(rig.focus);
 
+  // Switch stars: the timer in the HUD, ticking through its last three seconds.
+  if (demo) hud.setStarTimer(0);
+  else if (running) {
+    const left = Math.max(0, ...s.sim.switchUntil.map((until, i) => (s.sim.stars[i] ? 0 : until - s.sim.time)));
+    hud.setStarTimer(left);
+    const n = Math.ceil(left);
+    if (n !== lastTick && n > 0 && n <= 3) sfx.tick();
+    lastTick = n;
+  }
+
   const vel = s.sim.velocity();
   hud.setTime(mode === 'mp' ? mp.clock(s.sim.elapsed) : s.sim.elapsed);
   hud.setSpeed(Math.hypot(vel[0], vel[2]));
@@ -689,7 +824,9 @@ function frame(now: number) {
 // Browser tests finish real races with the autopilot. Only in test builds: in production this
 // would be a free way to farm rewards.
 if (import.meta.env.VITE_TEST_HOOKS) {
-  (window as unknown as { __autopilot: () => void }).__autopilot = () => { if (mode === 'playing') testPilot = new Autopilot(current().sim); };
+  (window as unknown as { __autopilot: (route?: 'main' | 'stars') => void }).__autopilot = (route = 'main') => {
+    if (mode === 'playing') testPilot = new Autopilot(current().sim, 16, { route });
+  };
   (window as unknown as { __perf: () => object }).__perf = () => ({
     calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
     geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures,

@@ -149,21 +149,84 @@ test('customize: free items equip and persist; locked ones show how to unlock', 
   expect(errors).toEqual([]);
 });
 
-test('solo run: the server checks it and pays rewards', async ({ page }) => {
-  test.setTimeout(150_000); // the autopilot plays all of Warm-Up (about 46 s)
+test('solo run (playtest mode): collects the stars, asks for feedback, and the server checks the run and pays rewards', async ({ page }) => {
+  test.setTimeout(150_000); // the autopilot plays all of Warm-Up on the star route (about 61 s)
   const errors = watchErrors(page);
-  await page.goto('/');
+  await page.goto('/?playtest');
+  await page.click('#consent-yes'); // stats on: the rating goes to the server too
   await expect(page.locator('#profile-chip')).toContainText('Lv 1');
-  // Play the course with the same autopilot the tests use, driven through the real game loop.
   await page.click('[data-action=play]');
+  await expect(page.locator('.level-card').first().locator('.stars')).toHaveText(' · ★ 0/3');
   await page.locator('.level-card').first().click();
+  await expect(page.locator('#stars')).toHaveText('☆☆☆');
+  await expect(page.locator('#playtest-tag')).toBeVisible();
+  // Play the course with the same autopilot the tests use, driven through the real game loop,
+  // taking the risky lines to every star.
   await expect(page.locator('#banner')).toHaveText('GO!', { timeout: 8000 });
-  await page.evaluate(() => (window as unknown as { __autopilot?: () => void }).__autopilot?.());
-  await expect(page.locator('#results')).toBeVisible({ timeout: 120_000 });
+  await page.evaluate(() => (window as unknown as { __autopilot?: (route: string) => void }).__autopilot?.('stars'));
+  await expect(page.locator('#stars')).toHaveText('★☆☆', { timeout: 60_000 });
+  // Warm-Up's fork has a switch star: its timer shows once the bot rolls over the button.
+  await expect(page.locator('#star-timer')).toContainText('⏱', { timeout: 90_000 });
+  // Playtest mode: the feedback form comes first, then the results.
+  await expect(page.locator('#feedback')).toBeVisible({ timeout: 120_000 });
+  await expect(page.locator('#fb-title')).toHaveText('How was Warm-Up?');
+  await page.click('[data-answer="fun:4"]');
+  await page.click('[data-answer="difficulty:right"]');
+  await page.click('[data-answer="stars:fun"]');
+  await expect(page.locator('[data-answer="fun:4"]')).toHaveAttribute('aria-pressed', 'true');
+  await page.locator('#fb-map').click({ position: { x: 200, y: 100 } });
+  await page.fill('#fb-comment', 'the fork was great');
+  await page.click('#feedback [data-action=send]');
+  await expect(page.locator('#results')).toBeVisible();
+  await expect(page.locator('#result-stars')).toContainText('★★★');
+  await expect(page.locator('#result-stars')).toContainText('All 3 this run! 🎉');
   await expect(page.locator('#result-rewards')).toContainText('XP', { timeout: 10_000 });
   await expect(page.locator('#result-rewards')).toContainText('on the leaderboard');
   await page.click('#results [data-action=leaderboard]');
   await expect(page.locator('#board-list .me').first()).toBeVisible();
+
+  // The rating and the run are kept in the browser and can be exported from Settings.
+  await page.keyboard.press('Escape'); // leaderboard → results
+  await page.click('#results [data-action=menu]');
+  await page.click('#menu [data-action=settings]');
+  await expect(page.locator('#btn-export-feedback')).toHaveText('📝 Export course feedback (1)');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#btn-export-feedback')]);
+  const file = JSON.parse(await (await download.createReadStream()).toArray().then((c) => Buffer.concat(c).toString('utf8'))) as { events: { name: string; props: Record<string, unknown> }[] };
+  const rating = file.events.find((e) => e.name === 'level_feedback')!;
+  expect(rating.props).toMatchObject({ level: 'warm-up', fun: 4, difficulty: 'right', stars: 'fun', comment: 'the fork was great' });
+  expect(rating.props.spot).toHaveLength(2);
+  const finish = file.events.find((e) => e.name === 'level_finish')!;
+  expect(finish.props.run).toMatchObject({ finished: true, stars: [0, 1, 2] });
+  expect(errors).toEqual([]);
+});
+
+test('playtest mode: quitting asks why; without it, quitting just leaves', async ({ page }) => {
+  const errors = watchErrors(page);
+  const quitMidRun = async () => {
+    await page.click('[data-action=play]');
+    await page.locator('.level-card').nth(1).click();
+    await expect(page.locator('#banner')).toHaveText('GO!', { timeout: 6000 });
+    await page.keyboard.down('KeyW');
+    await page.waitForTimeout(600);
+    await page.keyboard.up('KeyW');
+    await page.keyboard.press('Escape');
+    await page.click('#pause [data-action=quit]');
+  };
+  await page.goto('/?playtest');
+  await quitMidRun();
+  await expect(page.locator('#feedback')).toBeVisible();
+  await expect(page.locator('#fb-questions')).toContainText('Why did you stop?');
+  await page.click('[data-answer="quit:boring"]');
+  await page.click('#feedback [data-action=send]');
+  await expect(page.locator('#menu')).toBeVisible();
+
+  await page.goto('/?playtest=0');
+  await expect(page.locator('#playtest-tag')).toBeHidden();
+  await quitMidRun();
+  await expect(page.locator('#menu')).toBeVisible();
+  await expect(page.locator('#feedback')).toBeHidden();
+  await page.click('#menu [data-action=settings]');
+  await expect(page.locator('#btn-export-feedback')).toHaveText('📝 Export course feedback (1)'); // the quit answer from before
   expect(errors).toEqual([]);
 });
 

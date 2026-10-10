@@ -34,6 +34,8 @@ export const SIM = {
   fallPenalty: 2,     // seconds added on fall
   countdown: 3,
   checkpointRadius: 2.5,
+  starRadius: 1.9,    // ball centre within this (sideways) of a star's centre collects it
+  buttonRadius: 1.6,  // ball centre within this of a switch star's button presses it
 };
 
 /** Client-only presentation settings. */

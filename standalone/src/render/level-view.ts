@@ -3,17 +3,62 @@ import type { Vec3 } from '../sim/math';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Palette } from '../levels/schema';
 import { THEMES, type Theme } from '../levels/themes';
-import type { ResolvedLevel, Solid, Volume } from '../sim/geometry';
+import { starAt, type ResolvedLevel, type Solid, type StarMarker, type Volume } from '../sim/geometry';
 import type { Simulation } from '../sim/simulation';
 
 // Builds meshes for every solid in a resolved level and keeps moving ones in sync with
-// the simulation. Also draws checkpoints and the goal. In the game, static boxes are merged
+// the simulation. Also draws checkpoints, stars and the goal. In the game, static boxes are merged
 // into one mesh per floor palette and per wall colour (a curvy course has hundreds of pieces);
 // the editor keeps one mesh per solid so clicks map back to pieces.
 
 
 const CHECKPOINT_IDLE = '#3a86ff';
 const CHECKPOINT_DONE = '#2ecc71';
+
+/** A chunky five-pointed star, centred on the origin, facing +z. */
+function starGeometry(): THREE.BufferGeometry {
+  const shape = new THREE.Shape();
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? 0.42 : 0.95;
+    const a = (i / 10) * Math.PI * 2 + Math.PI / 2;
+    if (i === 0) shape.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    else shape.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+  }
+  const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.22, bevelEnabled: true, bevelThickness: 0.08, bevelSize: 0.06, bevelSegments: 1 });
+  geometry.center();
+  return geometry;
+}
+
+/** A soft white glow behind each star, so it stands out against yellow arms and gold floors. */
+function haloTexture(): THREE.CanvasTexture {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  g.addColorStop(0, 'rgba(255,255,255,0.9)');
+  g.addColorStop(0.4, 'rgba(255,240,180,0.45)');
+  g.addColorStop(1, 'rgba(255,240,180,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  return new THREE.CanvasTexture(canvas);
+}
+
+interface StarView {
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
+  halo: THREE.Sprite;
+  star: StarMarker;
+  /** Where it was when collected (riding stars move); the burst rises from here. */
+  base: Vec3;
+  /** 0 while waiting; counts up to 1 as it bursts after being collected. */
+  burst: number;
+  collected: boolean;
+  /** Switch stars: the button on the floor. */
+  button?: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshStandardMaterial>;
+}
+
+const BUTTON_OFF = '#e63946';
+const BUTTON_ON = '#ffd60a';
 
 function checkerTexture(a: string, b: string): THREE.CanvasTexture {
   const size = 128;
@@ -271,6 +316,7 @@ export class LevelView {
   private scrolling: { tex: THREE.Texture; rate: number }[] = [];
   private crumbles: Solid[] = [];
   private springs = new Map<number, number>(); // spring solid id -> bounce 0..1
+  private stars: StarView[] = [];
 
   constructor(scene: THREE.Object3D, level: ResolvedLevel, { merge = true } = {}) {
     const mergeable = (s: Solid) => merge && !s.motion && !s.effect && s.shape.kind === 'box';
@@ -330,6 +376,36 @@ export class LevelView {
       group.userData.piece = cp.piece;
       scene.add(group);
       this.checkpoints.push({ ring, flag });
+    }
+
+    if (level.stars.length) {
+      const geometry = starGeometry(), glow = haloTexture();
+      for (const [i, star] of level.stars.entries()) {
+        const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+          color: '#ffd60a', emissive: '#ffb703', emissiveIntensity: 0.7, metalness: 0.3, roughness: 0.35, transparent: true,
+        }));
+        mesh.position.set(...star.position);
+        mesh.rotation.y = i; // not all in step
+        mesh.castShadow = true;
+        mesh.userData.piece = star.piece;
+        const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+        halo.scale.setScalar(3.4);
+        mesh.add(halo);
+        scene.add(mesh);
+        let button: StarView['button'];
+        if (star.button) {
+          // A round floor switch; it lights up while its star is out.
+          button = new THREE.Mesh(
+            new THREE.CylinderGeometry(1.4, 1.5, 0.12, 28),
+            new THREE.MeshStandardMaterial({ color: BUTTON_OFF, emissive: BUTTON_OFF, emissiveIntensity: 0.35, roughness: 0.4 }),
+          );
+          button.position.set(star.button.position[0], star.button.position[1] + 0.06, star.button.position[2]);
+          button.receiveShadow = true;
+          button.userData.piece = star.piece;
+          scene.add(button);
+        }
+        this.stars.push({ mesh, halo, star, base: star.position, burst: 0, collected: false, button });
+      }
     }
 
     if (level.goal) {
@@ -392,6 +468,19 @@ export class LevelView {
     this.springs.set(solidId, 1);
   }
 
+  /** Collected stars burst and disappear; `false` puts a star back (restart). */
+  setStar(index: number, collected: boolean) {
+    const star = this.stars[index];
+    if (!star) return;
+    star.collected = collected;
+    star.burst = 0;
+    star.base = star.mesh.position.toArray() as Vec3;
+    star.mesh.visible = true;
+    star.mesh.scale.setScalar(1);
+    star.mesh.material.opacity = 1;
+    star.halo.material.opacity = 1;
+  }
+
   setCheckpoint(index: number, reached: boolean) {
     const color = reached ? CHECKPOINT_DONE : CHECKPOINT_IDLE;
     this.checkpoints[index].flag.material.color.set(color);
@@ -412,6 +501,34 @@ export class LevelView {
       else this.pulses.set(id, next);
     }
     if (this.goalArch) this.goalArch.rotation.y = sim.time * 0.8;
+    for (const [i, star] of this.stars.entries()) {
+      if (star.button) {
+        // Locked: a faint ghost and a red button. Unlocked: solid, the button lit, and it blinks
+        // in its last two seconds.
+        const left = (sim.switchUntil[i] ?? 0) - sim.time;
+        const on = left > 0 || star.collected;
+        star.button.material.color.set(left > 0 ? BUTTON_ON : BUTTON_OFF);
+        star.button.material.emissive.set(left > 0 ? BUTTON_ON : BUTTON_OFF);
+        if (!star.collected) star.mesh.material.opacity = !on ? 0.22 : left < 2 && Math.floor(left * 6) % 2 ? 0.35 : 1;
+        star.mesh.material.emissiveIntensity = on ? 0.7 : 0.1;
+        star.halo.material.opacity = on ? 1 : 0.15;
+      }
+      if (!star.mesh.visible) continue;
+      if (star.collected) {
+        // Burst: spin fast, swell, rise and fade out.
+        star.burst = Math.min(1, star.burst + dt * 2.5);
+        star.mesh.rotation.y += dt * 18;
+        star.mesh.scale.setScalar(1 + star.burst * 1.2);
+        star.mesh.position.y = star.base[1] + star.burst * 2;
+        star.mesh.material.opacity = 1 - star.burst;
+        star.halo.material.opacity = 1 - star.burst;
+        if (star.burst >= 1) star.mesh.visible = false;
+      } else {
+        const at = starAt(star.star, sim.time);
+        star.mesh.rotation.y += dt * 2;
+        star.mesh.position.set(at[0], at[1] + Math.sin(sim.time * 2.5 + star.star.position[0]) * 0.18, at[2]);
+      }
+    }
 
     for (const s of this.scrolling) s.tex.offset.y = (s.tex.offset.y + s.rate * dt) % 1;
     for (const [id, b] of this.springs) {

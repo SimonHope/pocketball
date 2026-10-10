@@ -1,4 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { LEVELS, levelId } from '../../src/levels';
+import { computeFeedback, levelVersion, type CourseFeedback, type StoredEvent } from '../../src/meta/feedback';
 
 // Numbers for M5's soft-launch exit test: day-1/day-7 retention, session length, and
 // where players quit. Computed from the anonymous events table.
@@ -13,9 +15,23 @@ export interface Report {
   sessionMinutes: { median: number; average: number };
   levels: { level: string; starts: number; finishes: number; quits: number; finishRate: number }[];
   errors: { message: string; count: number }[];
+  /** Course feedback (ratings, quits, falls) for each course's current layout, the ones needing attention first. */
+  feedback: CourseFeedback[];
 }
 
-export function computeReport(db: DatabaseSync, now = Date.now()): Report {
+/** Each built-in course's current version (so feedback on older layouts is left out). */
+export function currentVersions(): Map<string, string> {
+  return new Map(LEVELS.map((l) => [levelId(l), levelVersion(l)]));
+}
+
+/** The stored events, as feedback files hold them. `names` limits which. */
+export function storedEvents(db: DatabaseSync, names?: string[]): StoredEvent[] {
+  const rows = db.prepare('SELECT name, props, t FROM events ORDER BY t').all() as { name: string; props: string; t: number }[];
+  return rows.filter((r) => !names || names.includes(r.name)).map((r) => ({ name: r.name, t: r.t, props: JSON.parse(r.props) as Record<string, unknown> }));
+}
+
+/** `extra`: events from exported feedback files, counted along with the database's. */
+export function computeReport(db: DatabaseSync, now = Date.now(), extra: StoredEvent[] = []): Report {
   const rows = db.prepare('SELECT anon_id, session, name, props, t FROM events ORDER BY t').all() as
     { anon_id: string; session: string; name: string; props: string; t: number }[];
 
@@ -70,5 +86,8 @@ export function computeReport(db: DatabaseSync, now = Date.now()): Report {
     levels: [...levels.entries()].map(([level, l]) => ({ level, ...l, finishRate: l.starts ? l.finishes / l.starts : 0 }))
       .sort((a, b) => a.finishRate - b.finishRate),
     errors,
+    feedback: computeFeedback([...storedEvents(db, FEEDBACK_EVENTS), ...extra], currentVersions()),
   };
 }
+
+export const FEEDBACK_EVENTS = ['level_feedback', 'level_finish', 'level_quit'];

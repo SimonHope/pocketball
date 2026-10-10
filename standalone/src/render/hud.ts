@@ -1,4 +1,4 @@
-// The DOM overlay: timer, best time, banners, speed, camera mode.
+// The DOM overlay: timer, best time, stars, banners, speed, camera mode.
 
 const el = (id: string) => {
   const e = document.getElementById(id);
@@ -15,6 +15,8 @@ export function formatTime(t: number): string {
 export class Hud {
   private timer = el('timer');
   private best = el('best');
+  private stars = el('stars');
+  private starTimer = el('star-timer');
   private banner = el('banner');
   private speed = el('speed');
   private cam = el('cam');
@@ -46,6 +48,23 @@ export class Hud {
 
   setTime(t: number) { this.timer.textContent = formatTime(t); }
   setBest(t: number | null) { this.best.textContent = t ? `Best ${formatTime(t)}` : ''; }
+  /** ★ for each star collected this run, ☆ for the rest; hidden on courses without stars. */
+  setStars(collected: boolean[]) {
+    this.stars.textContent = collected.map((got) => (got ? '★' : '☆')).join('');
+    this.stars.hidden = !collected.length;
+  }
+  /** A switch star's timer: seconds left (0 hides it). */
+  setStarTimer(left: number) {
+    const text = left > 0 ? `⏱ ${Math.ceil(left)}` : '';
+    if (this.starTimer.textContent !== text) this.starTimer.textContent = text;
+    this.starTimer.hidden = !text;
+    this.starTimer.classList.toggle('hurry', left > 0 && left <= 3);
+  }
+  popStars() {
+    this.stars.classList.remove('pop');
+    void this.stars.offsetWidth; // restart the animation
+    this.stars.classList.add('pop');
+  }
   setSpeed(unitsPerSecond: number) { this.speed.textContent = `${Math.round(unitsPerSecond * 3.6)} km/h`; }
   setCameraMode(mode: string) { this.cam.textContent = `Camera: ${mode} (C)`; }
 }

@@ -7,7 +7,9 @@ import type { ThemeName } from './themes';
 // backtracker, with a few extra openings (loops) and open rooms so there's more than one way
 // through. Hazards: narrow bridges over pits, bumpers, sweeper rooms, and dead ends with no
 // floor. Mechanics: belt corridors, crumbling floors, low gravity, and springs that hop a wall
-// as a shortcut. The bot route is the shortest path through the cells.
+// as a shortcut. The bot route is the shortest path through the cells. Stars sit at the end of
+// side branches, so finding them means exploring; the star route detours to each one and back.
+// The farthest one is a switch star: rolling over its junction starts a timer to find it.
 
 export interface MazeOptions {
   seed: number;
@@ -41,6 +43,8 @@ export interface MazeOptions {
   /** Cap on bot speeds (lower on ice). */
   maxSpeed?: number;
   bridgeWidth?: number;
+  /** Stars at the ends of side branches (default 0). */
+  stars?: number;
 }
 
 const S = 10;          // cell size
@@ -243,9 +247,12 @@ export function generateMaze(opts: MazeOptions): LevelData | null {
   // Route, hazards and checkpoints along the solution.
   const maxSpeed = opts.maxSpeed ?? 14;
   const route: RoutePoint[] = [];
+  const routeCell: number[] = []; // index on the solution of the cell each waypoint belongs to
+  let atCell = 0;
   const wp = (p: Vec3, extra: Omit<RoutePoint, 'p'> = {}) => {
     if (extra.speed) extra.speed = Math.min(extra.speed, maxSpeed);
     route.push({ p, ...extra });
+    routeCell.push(atCell);
   };
   let sinceCheckpoint = 0;
   const bridgeWidth = opts.bridgeWidth ?? 4.5;
@@ -256,6 +263,7 @@ export function generateMaze(opts: MazeOptions): LevelData | null {
     const [rx, rz] = [-dz, dx];
     const at = (ahead: number, side = 0): Vec3 => [p[0] + dx * ahead + rx * side, 0, p[2] + dz * ahead + rz * side];
     const kind = special.get(cell);
+    atCell = k;
     sinceCheckpoint++;
     if (kind === 'bridge') {
       pieces.push({ type: 'path', from: at(-S / 2), to: at(S / 2), width: bridgeWidth, palette: 'orange' });
@@ -339,7 +347,64 @@ export function generateMaze(opts: MazeOptions): LevelData | null {
   pieces.push({ type: 'block', position: [goal[0], 1.5, goal[2] - 6.25], size: [12, 3, 0.5], color: wallColor });
   for (const s of [-1, 1]) pieces.push({ type: 'block', position: [goal[0] + s * 6.25, 1.5, goal[2]], size: [0.5, 3, 12], color: wallColor });
   pieces.push({ type: 'goal', position: goal });
+  atCell = path.length;
   wp(goal, { speed: 6 });
+
+  // Stars: at the ends of side branches (dead ends with floor), the longest branches first, at
+  // most one per junction. The star route leaves the solution at the junction, rolls down the
+  // branch to the star, and comes back.
+  const detours: { k: number; cells: number[] }[] = [];
+  if (opts.stars) {
+    const branches: { k: number; cells: number[] }[] = [];
+    for (const end of open.keys()) {
+      if (onPath.has(end) || holes.has(end) || roomCells.has(end) || openNeighbours(end).length !== 1) continue;
+      // Walk back from the dead end to the solution (breadth-first, through ordinary cells).
+      const back = new Map<number, number>([[end, -1]]);
+      const queue = [end];
+      let junction = -1;
+      while (queue.length && junction < 0) {
+        const i = queue.shift()!;
+        for (const j of openNeighbours(i)) {
+          if (back.has(j) || holes.has(j) || roomCells.has(j)) continue;
+          back.set(j, i);
+          if (onPath.has(j)) { junction = j; break; }
+          queue.push(j);
+        }
+      }
+      if (junction < 0 || gateCells.has(junction) || special.has(junction)) continue;
+      const cells: number[] = [];
+      for (let i = back.get(junction)!; i >= 0; i = back.get(i)!) cells.push(i); // junction side → dead end
+      if (cells.length > 4) continue; // not too far off the solution
+      branches.push({ k: pathIndex.get(junction)!, cells });
+    }
+    branches.sort((a, b) => b.cells.length - a.cells.length);
+    for (const br of branches) {
+      if (detours.length >= opts.stars) break;
+      if (detours.some((d) => Math.abs(d.k - br.k) < 2)) continue;
+      detours.push(br);
+    }
+    if (detours.length < opts.stars) return null;
+    detours.sort((a, b) => a.k - b.k);
+  }
+  // The star at the end of the longest branch is a switch star: its button is at the junction,
+  // on the solution, so everyone sets it off; then it's a timed dash to find it.
+  const timed = detours.reduce((best, d, i) => (d.cells.length > (detours[best]?.cells.length ?? 0) ? i : best), -1);
+  const starRoute: RoutePoint[] = [];
+  let next = 0;
+  route.forEach((r, i) => {
+    // Detours go after the waypoints up to their junction.
+    while (next < detours.length && routeCell[i] > detours[next].k) {
+      const { k, cells } = detours[next];
+      const j = centre(path[k]);
+      const end = centre(cells[cells.length - 1]);
+      pieces.push({ type: 'star', position: [end[0], 1.4, end[2]], ...(next++ === timed ? { button: j, time: 8 } : {}) });
+      starRoute.push({ p: j, speed: 6, lane: 0 });
+      for (const c of cells) starRoute.push({ p: centre(c), speed: Math.min(6, maxSpeed), lane: 0 });
+      for (const c of [...cells].reverse().slice(1)) starRoute.push({ p: centre(c), speed: Math.min(6, maxSpeed), lane: 0 });
+      starRoute.push({ p: j, speed: 6, lane: 0 });
+    }
+    starRoute.push({ ...r });
+  });
 
   return {
     format: 1,
@@ -349,5 +414,6 @@ export function generateMaze(opts: MazeOptions): LevelData | null {
     start: { position: [0, 1, 2], yaw: 0 },
     pieces,
     route,
+    ...(detours.length ? { starRoute } : {}),
   };
 }

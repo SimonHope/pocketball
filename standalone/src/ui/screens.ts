@@ -1,7 +1,7 @@
 // Menu screens are plain HTML (see index.html). This shows one at a time, routes
 // `data-action` clicks to handlers, and provides focus navigation for keyboard and gamepad.
 
-export type ScreenId = 'loading' | 'menu' | 'levels' | 'pause' | 'results' | 'settings' | 'mp' | 'lobby' | 'mp-results' | 'customize' | 'leaderboard' | 'shop';
+export type ScreenId = 'loading' | 'menu' | 'levels' | 'pause' | 'results' | 'settings' | 'mp' | 'lobby' | 'mp-results' | 'customize' | 'leaderboard' | 'shop' | 'feedback';
 type Actions = Record<string, () => void>;
 
 const FOCUSABLE = 'button:not([hidden]), input, select';

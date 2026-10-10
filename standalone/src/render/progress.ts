@@ -27,3 +27,24 @@ export function recordTime(levelName: string, time: number): boolean {
   save(key(levelName), String(time));
   return true;
 }
+
+// Stars found on each course: the indices of the level's stars collected in finished runs,
+// added up across runs.
+const starKey = (levelName: string) => `hamball.stars.${levelName}`;
+
+export function starsFound(levelName: string): Set<number> {
+  try {
+    const v: unknown = JSON.parse(load(starKey(levelName)) ?? '[]');
+    return new Set(Array.isArray(v) ? v.filter((n): n is number => Number.isInteger(n) && n >= 0) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** Adds the stars collected in a finished run. Returns the ones that are new. */
+export function recordStars(levelName: string, collected: boolean[]): number[] {
+  const found = starsFound(levelName);
+  const fresh = collected.flatMap((got, i) => (got && !found.has(i) ? [i] : []));
+  if (fresh.length) save(starKey(levelName), JSON.stringify([...found, ...fresh].sort((a, b) => a - b)));
+  return fresh;
+}

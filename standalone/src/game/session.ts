@@ -61,6 +61,7 @@ export class RaceSession {
     this.stepsSinceGo = 0;
     this.trace = [{ t: -20, p: this.sim.position(), v: [0, 0, 0] }];
     this.level.checkpoints.forEach((_, i) => this.levelView.setCheckpoint(i, false));
+    this.level.stars.forEach((_, i) => this.levelView.setStar(i, false));
     this.prevPos = this.sim.position();
     this.prevRot = this.sim.rotation();
   }

@@ -10,7 +10,7 @@ npm run check      # typecheck + lint + unit/integration tests
 npm run test:e2e   # browser tests on the production build (needs Google Chrome; starts both servers)
 npm run loadtest -- 4 16 0   # rooms × bots per room × level: server CPU and race results
 npm run loadtest -- 4 quick 2  # 4 Quick Play rooms (1 client + 7 server bots), 2 games each
-npm run gen-levels   # generate race courses (edit TARGETS in scripts/generate-levels.ts)
+npm run gen-levels   # generate race courses (edit TARGETS in scripts/generate-levels.ts); prints each course's plan
 npm run add-walls    # rebuild safety walls on every race course (after editing a level)
 npm run build:pages  # single-player build for GitHub Pages (no server) → dist-pages/
                      # gen-levels also extends Warm-Up, Zig-Zag, Sweeper Alley from src/levels/bases/
@@ -84,7 +84,8 @@ src/
   levels/themes.ts     world themes: sky, light, floor colors, floor grip (ice is slippery)
   levels/generator.ts  course generator (segments → pieces + bot route): straights, ramps, turns, curves,
                        switchbacks, jumps, split paths, stairs, bridges, movers, sweepers;
-                       downhill: steep plunges, corkscrews, cliff drops, cascades
+                       downhill: steep plunges, corkscrews, cliff drops, cascades; combos, forks
+                       and stars; paced in acts (see "How courses are paced" below)
   levels/maze.ts       top-down maze generator: carved grid, loops, sweeper rooms, bridges over pits,
                        bumpers, holes; route = shortest path; checkpoint gates
   render/course-map.ts top-down 2D map of a course (level select cards)
@@ -171,6 +172,55 @@ API (`server/meta/http.ts`, on the game server at `/api`):
   - Result: an 8-racer race went from 482 to about 206 draw calls, and the browser tests fail above 260.
 - **Download size:** about 1.3 MB gzipped (Rapier's WebAssembly is most of it).
 
+## How courses are paced
+
+Each generated race course tells a short story instead of repeating one idea. `scripts/generate-levels.ts` gives every course `acts`:
+
+| Act | Share | What happens | Difficulty `d` |
+|---|---|---|---|
+| Intro | ~20% | The course's signature mechanic in its easiest form, with a breather after each | 0 → 0.2 |
+| Build-up | ~45% | The signature mixed with the course's other segments (`weights`); after two hard segments comes a breather | 0.25 → 0.7 |
+| Twist | ~20% | A risk/reward **fork**, then **combos** (two mechanics at once) | 0.6 → 0.85 |
+| Finale | last 1–2 | The signature mechanic at its hardest, right before the goal | 0.9 → 1 |
+
+- **Difficulty** sets each segment's numbers: bridges narrow, gaps widen, sweepers and belts speed up, crumbling tiles fall sooner, wind gets stronger. `d = 1` is about as hard as the bots can reliably manage.
+- **Combos:** `sweeperBelt` (a belt under a sweeping arm), `windCrumble` (crumbling tiles in a crosswind), `boostSpring` (spring onto a launch strip), `liftWind` (a lift up to a windy bridge), `bumperTreadmill` (climb a down-belt past bumpers), `crumbleJump` (a run-up that crumbles behind you).
+- **Forks:** a railed detour out to the side, or straight across a narrow beam or crumbling tiles with no safety walls. The risky line is about half as long.
+- `npm run gen-levels` prints each course's plan, e.g. `springUp(0) → turn(0.2) → … → fork(0.6) → boostSpring(0.8) → springUp(0.9) → springUp(1)`.
+
+## Stars
+
+Every race course hides **3 stars**, and each one asks you to use the mechanic it sits on harder or differently than the safe line does. The careful bot on the safe line never gets one (`gen-levels` rejects courses where it does).
+
+| Kind | Where | What it asks |
+|---|---|---|
+| Super spring | `springUp` | A smaller, stronger spring beside the normal one; the star waits at the top of its bounce |
+| Edge line | jumps | The star is over the gap off the kicker's edge: take the jump on its edge |
+| Moon swerve | `moonJump` | The star floats beside the low-gravity arc: steer in the air |
+| Column | `updraft` | Near the top of the air column, off to one side: ride the draft |
+| Steer the fall | `drop` | Just past the cliff edge, to one side: roll off there |
+| Crest | `boostRamp` | On the crest beside a rail: steer to the edge at boost speed |
+| Crumbling detour | crumble bridges | An open crumbling side tile: on and off before it drops |
+| Downwind ledge | `windBridge` | An open ledge the wind blows you toward; then fight back |
+| Tightrope / narrow lane | `bridge`, `split` | A thin open beam alongside, or the narrower open lane |
+| Fast lane | `conveyor` | A narrow, faster, open belt beside the main one |
+| Corner, gap | `zigzag`, `gauntlet` | The corner's outer tip; the open edge between two arms |
+| Catch the tip (riding) | `sweeper` | Rides the arm's tip: wait in a corner and snatch it as it swings past |
+| Elevator (riding) | `lift` | Rides its own lift beside the tower: catch it at the top edge |
+| First ride (switch) | `mover` | A button on the near pad; the star on the far pad for one platform trip |
+| Shortcut / race (switch) | `fork` | On the risky line, or a switch star at the exit that only the risky line beats |
+| Don't brake (switch) | downhill curves, plunges, cascades | A button at the top, the star at the bottom |
+| Spur | any | A dead-end plank: only when nothing else on the course offered one |
+
+- **Choosing:** stars go one per third of the course (before the finale). The course's own mechanics (its acts) get the first half of each third, then any segment that can hide one may. A course never repeats a kind (except the spur). `npm run gen-levels` prints each star's kind in the plan, e.g. `springUp(0)★super`.
+- **Riding stars** (`to` + `period`, or `center` + `speed`) move exactly in step with the mover or arm they copy. The star route waits for them at `catch` points.
+- **Switch stars** (`button`, `time`) are a faint ghost until you roll over their red button; then the button lights up, the star shows for `time` seconds (a ⏱ timer in the HUD ticks down), and it blinks in its last 2 s. `gen-levels` sets `time` to 1.2× the star-route bot's button-to-star time. Mazes make their farthest star a switch star, with the button at its junction.
+- **Collecting:** roll through one. Stars stay collected after a fall and reset when you restart.
+- **Saving:** stars count once you finish, and add up across runs (saved in the browser, like best times). The HUD, the results screen and the level select (stars on each map) show them.
+- **Multiplayer:** races have no stars for now.
+- **Gold times** take the risky lines into account: gold is the lower of 0.85× the careful bot's time and 0.95× the star route's time.
+- **The star route:** levels have a second bot route, `starRoute`, through the risky lines and past every star. Tests check that a bot following it collects all 3 without falling, and that the server's anti-cheat accepts such a run.
+
 ## Themes and cosmetics
 
 - **Themes:** set `"theme"` on a level: `meadow`, `candy`, `ice` (floors grip 30% as much) or `night`. This is placeholder art until final art arrives.
@@ -214,6 +264,7 @@ A level is a JSON file listing its pieces:
 | `checkpoint` | `position`, `yaw?` |
 | `goal` | `position`, `radius?` (exactly one per race course) |
 | `zone` | `position`, `radius?` (arenas only: King of the Hill zones) |
+| `star` | `position` (the star's centre, about 1.4 above the floor): a collectible; race courses only. Optional: `to` + `period` (slides there and back like a mover), `center` + `speed` (circles like a sweeper arm's tip), `button` (floor point of a switch) + `time` (seconds it shows, default 6) |
 | `boost` | `position` (floor), `yaw?`, `w?`, `d?`, `speed?` (default 30): shoots you along `yaw` |
 | `spring` | `position` (floor), `radius?`, `power?` (up speed, default 16), `yaw?`, `push?` (forward speed; unset keeps yours) |
 | `conveyor` | `from`, `to` (belt runs this way), `width`, `speed?` (default 12), `rails?`: your top speed counts relative to the belt |
@@ -229,7 +280,11 @@ Levels also have:
 - Lifts are `mover` pieces whose `from` and `to` differ in height. Bots ride them with `wait` waypoints at the bottom and the top.
 - `camera`: `topdown` starts the course in the top-down camera (mazes use it). Players can still switch with C.
 
-The route's waypoints can also set `lane` (the widest lane bots may take there; 0 means tight, racing line only).
+The route's waypoints can also set `lane` (the widest lane bots may take there; 0 means tight, racing line only) and `catch` (hold there until a star is collected: for riding stars).
+
+`pad`, `path`, `crumble` and `conveyor` pieces can set `open: true`: no safety walls on them (risky lines that are meant to be fallen off).
+
+`starRoute` (optional) is a second list of waypoints that takes the risky lines and collects every star. The editor's **Check with bot** also runs it. The editor doesn't edit `starRoute` yet: if you move pieces it passes through, edit the JSON or regenerate the course.
 
 `route` is a list of waypoints (`p`, plus optional `speed` and `wait`) that the autopilot follows. The course test fails if the autopilot can't finish a level without falling, so every level needs a route. `wait: true` holds until a moving platform arrives under that point.
 
@@ -252,6 +307,8 @@ To add a level, create `src/levels/<name>.json`, register it in `src/levels/inde
 - `modes.test.ts`, `cosmetics.test.ts`: mode rules and catalog checks.
 - `course.test.ts` also runs bots in the outer lanes on every course, and an 8-bot crowd race.
 - `e2e/multiplayer.spec.ts`: two browsers: create, join by invite link, ready, race, agree on live positions, leave; wrong room code shows a clear error; Quick Play lobby counts down and bots fill the race.
+- Stars and pacing: stars are collected once, kept after a fall, reset on restart; riding stars stay in step with their mover or arm; switch stars show only while their timer runs, which survives a fall (`mechanics.test.ts`); every star-hiding segment hides its own kind of star, which the star route collects and the safe line doesn't (`course.test.ts`); stars use the course's mechanics first and never repeat a kind (`levels.test.ts`); every course has 3 stars and a star route that a bot finishes with all 3 and no falls (`course.test.ts`); star-route runs pass the server checks (`rules.test.ts`); courses run intro → build-up → twist → finale and get harder, forks have an open risky line (`levels.test.ts`); every combo segment builds and can be finished (`course.test.ts`).
+- `feedback.test.ts`: the run recorder (falls, sections, splits, restarts), layout versions, and the per-course feedback numbers; `meta.test.ts` checks the report includes them, and `e2e/smoke.spec.ts` rates a course in playtest mode, exports it, and answers the quit form.
 - `meta.test.ts`, `api.test.ts`: accounts and recovery, level curve, rewards (paid once per claim), buying and equipping, level unlocks, ad-double limits, purchases, challenges, solo replay checks (honest run, run with a fall, cheat, unfinished), leaderboards, the HTTP API, CORS, Stripe webhooks (valid, forged, stale, retried), multiplayer rewards, the analytics report.
 - `e2e/smoke.spec.ts` also checks: Customize (free items persist, locked items show requirements); a full solo run in the browser that the server checks, pays out and ranks; the stats consent (nothing sent without a yes); delete-my-data.
 - `cluster.test.ts`: gateway + 2 workers + Redis. Accounts work on either worker, room codes and Quick Play match across workers, rooms spread out, and crashed workers restart. Skipped without Redis; CI provides it.
@@ -259,10 +316,21 @@ To add a level, create `src/levels/<name>.json`, register it in `src/levels/inde
 - `portal-build.test.ts`: CrazyGames, Poki and web builds (SDK script, relative paths, no shop or editor on portals).
 - `quality.test.ts`: auto quality steps down on slow frames, ignores hidden-tab hiccups, and doesn't flip back and forth.
 
+## Playtesting and course feedback
+
+Every course can collect feedback for tuning: what players think of it, and what happened on their runs.
+
+- **Run data (automatic):** each finish or quit records where the ball left the floor before every fall, the time at each checkpoint, restarts, and the stars found (`RunRecorder` in `src/meta/feedback.ts`). It rides along on the `level_finish` / `level_quit` events.
+- **Ratings:** after a run, one tap each for Fun (😴 … 🤩), Difficulty, Length, the Stars and Variety, plus tapping the course map where it was most frustrating (this run's falls show as red dots). Quitting asks why instead (too hard, too long, boring, lost).
+- **When it asks:** open the game with **`?playtest`** (remembered; `?playtest=0` turns it off) and the form appears after every finish and quit, with a comment box and a PLAYTEST tag in the HUD. Otherwise there's just a **📝 Rate this course** button on the results screen (highlighted the first time).
+- **Where it goes:** always kept in the browser (the last 300 events), so it works on the offline Pages build: **Settings → Export course feedback** downloads it as a file. With stats consent and a server, it's also sent as anonymous events.
+- **Reading it:** `npm run analytics` adds a per-course feedback table (the courses that need attention first); `npm run analytics -- a.json b.json` adds exported files, and `npm run analytics -- --export all.json` writes the server's feedback as a file. Open **`/feedback.html`** (the feedback viewer) and drop files in to see each course's map with falls and marked spots, rating bars, section times, star find rates and comments.
+- Feedback is per course **layout** (`v`, a hash of the pieces): regenerating a course starts its feedback fresh.
+
 ## Single-player version on GitHub Pages
 
 `npm run build:pages` builds a single-player version into `dist-pages/`. It needs no server:
-- **Included:** all 28 courses, Customize (everything unlocked except paid Starter Pack items), the level editor and Settings.
+- **Included:** all 28 courses (with stars), Customize (everything unlocked except paid Starter Pack items), the level editor and Settings.
 - **Left out:** Quick Play, rooms, the shop, leaderboards, accounts and analytics.
 - **Offline:** it makes no network requests, and asset paths are relative, so it works under `https://<you>.github.io/<repo>/`.
 - **Saved progress:** best times and your look are stored in the browser.

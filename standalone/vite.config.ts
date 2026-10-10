@@ -41,10 +41,12 @@ export default defineConfig({
     // Rapier embeds its WebAssembly engine in the JS bundle (~2 MB); see TRACKER.md tech debt.
     chunkSizeWarningLimit: 4096,
     rolldownOptions: {
-      // The game, and (own site only) the level editor, kept out of the game bundle.
+      // The game, and (own site only) the level editor and feedback viewer, kept out of the game bundle.
       input: {
         game: resolve(import.meta.dirname, 'index.html'),
         ...(portal && !solo ? {} : { editor: resolve(import.meta.dirname, 'editor.html') }),
+        // The course feedback viewer: a dev tool for our own site (npm run dev serves it anyway).
+        ...(portal ? {} : { feedback: resolve(import.meta.dirname, 'feedback.html') }),
       },
     },
   },

@@ -16,6 +16,15 @@
       #hud.hidden { display: none; }
       #timer { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); font-size: 40px; font-weight: 800; font-variant-numeric: tabular-nums; }
       #best { position: absolute; top: 18px; right: 20px; font-size: 18px; font-weight: 600; }
+      #stars { position: absolute; top: 44px; right: 20px; font-size: 26px; letter-spacing: 2px; color: #ffd60a; text-shadow: 0 2px 6px rgba(0,0,0,.45); }
+      #stars.pop { animation: star-pop .45s ease-out; }
+      #star-timer { position: absolute; top: 80px; right: 20px; font-size: 20px; font-weight: 800; color: #fff; background: rgba(230,57,70,.85); padding: 2px 10px; border-radius: 12px; }
+      #star-timer.hurry { background: #e63946; animation: star-pop .5s ease-out infinite; }
+      @keyframes star-pop { 40% { transform: scale(1.35); } }
+      .result-stars { font-size: 30px; color: #ffd60a; letter-spacing: 3px; }
+      .result-stars .earlier { opacity: .35; }
+      .result-stars small { display: block; font-size: 14px; color: inherit; letter-spacing: 0; opacity: .9; }
+      .level-card .stars { color: #ffd60a; letter-spacing: 1px; }
       #level { position: absolute; top: 18px; left: 20px; font-size: 18px; font-weight: 600; }
       #cam { position: absolute; top: 44px; left: 20px; font-size: 14px; opacity: .8; text-transform: capitalize; }
       #banner { position: absolute; top: 38%; left: 50%; transform: translate(-50%, -50%); font-size: 72px; font-weight: 900; text-align: center; transition: opacity .2s; }
@@ -57,6 +66,16 @@
       .big-time { font-size: 56px; font-weight: 900; font-variant-numeric: tabular-nums; }
       .targets { font-size: 14px; opacity: .85; display: flex; gap: 14px; flex-wrap: wrap; }
       .row { display: flex; gap: 10px; flex-wrap: wrap; }
+      .panel.feedback { width: 600px; gap: 10px; }
+      .fb-q { display: flex; flex-direction: column; gap: 6px; }
+      .fb-q .label { font-weight: 700; font-size: 15px; opacity: .85; }
+      .answers { display: flex; gap: 6px; flex-wrap: wrap; }
+      .answers button { flex: 1; text-align: center; font-size: 15px; padding: 8px 10px; white-space: nowrap; }
+      .answers.emoji button { font-size: 24px; padding: 4px 6px; }
+      .answers button[aria-pressed=true] { background: var(--accent); }
+      #fb-map { width: 100%; aspect-ratio: 560 / 260; border-radius: 10px; background: rgba(10, 20, 40, .35); cursor: crosshair; touch-action: none; }
+      #fb-comment { font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px; border: 0; }
+      #playtest-tag { position: absolute; left: 20px; bottom: 16px; font-size: 12px; font-weight: 900; letter-spacing: .1em; padding: 2px 8px; border-radius: 6px; background: #e63946; color: #fff; }
       .row button { flex: 1; text-align: center; }
       label.setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-weight: 600; }
       label.setting input[type=range] { width: 160px; }
@@ -73,6 +92,7 @@
       .consent { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 6; display: flex; gap: 10px; align-items: center; background: var(--panel); padding: 10px 14px; border-radius: 12px; font-size: 14px; max-width: calc(100% - 32px); box-sizing: border-box; flex-wrap: wrap; justify-content: center; }
       .consent a, .legal a { color: #ffd166; }
       .consent button { padding: 6px 14px; font-size: 14px; }
+      body:has(#consent:not([hidden])) .screen { padding-bottom: 110px; } /* keep the stats notice off menu buttons */
       .legal { font-size: 12px; opacity: .7; }
       #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); background: rgba(10,20,40,.85); padding: 10px 18px; border-radius: 99px; font-weight: 700; display: none; z-index: 5; }
       #toast.show { display: block; }
@@ -119,6 +139,9 @@
       <div id="level"></div>
       <div id="timer">0.00</div>
       <div id="best"></div>
+      <div id="stars" hidden></div>
+      <div id="playtest-tag" hidden>PLAYTEST</div>
+      <div id="star-timer" hidden></div>
       <div id="banner"></div>
       <div id="speed"></div>
       <div id="cam"></div>
@@ -179,6 +202,7 @@
         <h2 id="result-title">Finish!</h2>
         <div id="result-time" class="big-time"></div>
         <div id="result-medal"></div>
+        <div id="result-stars" class="result-stars"></div>
         <div id="result-best"></div>
         <div id="result-targets" class="targets"></div>
         <div id="result-rewards" class="rewards"></div>
@@ -189,8 +213,26 @@
         <div class="row">
           <button data-action="adDouble" id="btn-ad-double" hidden>📺 Double coins</button>
           <button data-action="leaderboard">🏆 Leaderboard</button>
+          <button data-action="rate" id="btn-rate">📝 Rate this course</button>
         </div>
         <button data-action="menu">Menu</button>
+      </div>
+    </div>
+
+    <div id="feedback" class="screen">
+      <div class="panel feedback">
+        <h2 id="fb-title">How was it?</h2>
+        <div id="fb-questions" class="fb-q" style="gap: 10px"></div>
+        <div class="fb-q">
+          <span class="label" id="fb-map-label">Tap the map where it was most frustrating (optional)</span>
+          <canvas id="fb-map" width="560" height="260"></canvas>
+        </div>
+        <input id="fb-comment" maxlength="200" placeholder="Anything else? (optional)" autocomplete="off" />
+        <div class="hint" id="fb-note"></div>
+        <div class="row">
+          <button class="primary" data-action="send">Send</button>
+          <button data-action="skip">Skip</button>
+        </div>
       </div>
     </div>
 
@@ -292,6 +334,7 @@
         <label class="setting">Share anonymous stats <input type="checkbox" id="set-analytics" /></label>
         <button data-action="deleteData">Delete my data</button>
         </div>
+        <button data-action="exportFeedback" id="btn-export-feedback" hidden>📝 Export course feedback</button>
         <div class="legal"><a href="privacy.html" target="_blank">Privacy policy</a> · <a href="terms.html" target="_blank">Terms</a></div>
         <button data-action="back">Back</button>
       </div>

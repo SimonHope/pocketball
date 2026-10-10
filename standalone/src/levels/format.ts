@@ -18,7 +18,7 @@ export function formatLevel(level: LevelData): string {
   const lines = Object.entries(level)
     .filter(([, v]) => v !== undefined)
     .map(([key, value]) => {
-      if ((key === 'pieces' || key === 'route') && Array.isArray(value)) {
+      if ((key === 'pieces' || key === 'route' || key === 'starRoute') && Array.isArray(value)) {
         const items = value.map((item) => `    ${inline(item)}`).join(',\n');
         return `  ${JSON.stringify(key)}: [\n${items}\n  ]`;
       }

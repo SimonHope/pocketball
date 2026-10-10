@@ -333,7 +333,7 @@ function floorPointAtTarget(): Vec3 {
   return [Math.round(t.x * 2) / 2, Math.round(t.y * 2) / 2, Math.round(t.z * 2) / 2];
 }
 
-const ADDABLE: Piece['type'][] = ['pad', 'path', 'block', 'bumper', 'sweeper', 'mover', 'checkpoint', 'goal', 'zone', 'boost', 'spring', 'conveyor', 'crumble', 'wind', 'lowgrav'];
+const ADDABLE: Piece['type'][] = ['pad', 'path', 'block', 'bumper', 'sweeper', 'mover', 'checkpoint', 'goal', 'zone', 'boost', 'spring', 'conveyor', 'crumble', 'wind', 'lowgrav', 'star'];
 $('add-buttons').replaceChildren(...ADDABLE.map((type) => {
   const b = document.createElement('button');
   b.textContent = `+ ${type}`;
@@ -440,7 +440,30 @@ $('btn-play').addEventListener('click', () => {
 });
 $('btn-game').addEventListener('click', () => { location.href = import.meta.env.BASE_URL; });
 
-// Runs the same check as the automated course test: can the bot finish by following the route?
+/** One bot run along the main route or the star route (same checks as the automated course tests). */
+function botRun(data: LevelData, route: 'main' | 'stars') {
+  const sim = new Simulation(resolveLevel(data));
+  try {
+    while (sim.phase === 'countdown') sim.step({ x: 0, z: 0 });
+    sim.drainEvents();
+    const pilot = new Autopilot(sim, 16, { route });
+    let falls = 0;
+    let fellAt = -1;
+    for (let t = 0; t < 300 && sim.phase !== 'finished'; t += 1 / 120) {
+      sim.step(pilot.input());
+      for (const e of sim.drainEvents()) {
+        if (e.type === 'fall') { falls++; fellAt = pilot.index; }
+      }
+      if (falls >= 3) break;
+    }
+    return { finished: sim.phase === 'finished', time: sim.elapsed, falls, where: fellAt >= 0 ? fellAt : pilot.index, stars: sim.stars.filter(Boolean).length };
+  } finally {
+    sim.dispose();
+  }
+}
+
+// Runs the same checks as the automated course tests: can the bot finish by following the
+// route? And if the level has stars and a star route, can it collect them all?
 $('btn-bot').addEventListener('click', () => {
   let data: LevelData;
   try {
@@ -449,31 +472,26 @@ $('btn-bot').addEventListener('click', () => {
     return flash(`Fix this first: ${(e as Error).message}`, false);
   }
   if (!data.route?.length) return flash('Add route waypoints so the bot knows where to go.', false);
-  const sim = new Simulation(resolveLevel(data));
-  try {
-    while (sim.phase === 'countdown') sim.step({ x: 0, z: 0 });
-    sim.drainEvents();
-    const pilot = new Autopilot(sim);
-    let falls = 0;
-    let fellAt = -1;
-    for (let t = 0; t < 120 && sim.phase !== 'finished'; t += 1 / 120) {
-      sim.step(pilot.input());
-      for (const e of sim.drainEvents()) {
-        if (e.type === 'fall') { falls++; fellAt = pilot.index; }
-      }
-      if (falls >= 3) break;
-    }
-    if (sim.phase === 'finished' && falls === 0) {
-      const m = data.medals;
-      flash(`✓ Bot finished in ${sim.elapsed.toFixed(2)}s with no falls${m && sim.elapsed > m.bronze ? ' — but slower than bronze; loosen medal times' : ''}`, !(m && sim.elapsed > m.bronze));
-    } else {
-      const where = fellAt >= 0 ? fellAt : pilot.index;
-      flash(`✗ Bot ${sim.phase === 'finished' ? `finished but fell ${falls}×` : 'did not finish'} — trouble near waypoint ${where}`, false);
-      if (level.route?.[where]) select({ kind: 'route', index: where });
-    }
-  } finally {
-    sim.dispose();
+  const run = botRun(data, 'main');
+  if (!run.finished || run.falls) {
+    flash(`✗ Bot ${run.finished ? `finished but fell ${run.falls}×` : 'did not finish'} — trouble near waypoint ${run.where}`, false);
+    if (level.route?.[run.where]) select({ kind: 'route', index: run.where });
+    return;
   }
+  const m = data.medals;
+  const slow = !!m && run.time > m.bronze;
+  let msg = `✓ Bot finished in ${run.time.toFixed(2)}s with no falls${slow ? ' — but slower than bronze; loosen medal times' : ''}`;
+  let ok = !slow;
+  const stars = data.pieces.filter((p) => p.type === 'star').length;
+  if (stars && data.starRoute?.length) {
+    const risky = botRun(data, 'stars');
+    const all = risky.finished && !risky.falls && risky.stars === stars;
+    msg += all ? ` · star route ${risky.time.toFixed(2)}s, all ${stars} ★` : ` · ✗ star route got ${risky.stars}/${stars} ★${risky.falls ? `, fell ${risky.falls}× near its waypoint ${risky.where}` : ''}${risky.finished ? '' : ', did not finish'}`;
+    ok &&= all;
+  } else if (stars) {
+    msg += ` · ${stars} ★ (no star route to check them with)`;
+  }
+  flash(msg, ok);
 });
 
 window.addEventListener('keydown', (e) => {

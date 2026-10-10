@@ -3,7 +3,7 @@
 **Goal:** a commercial Hamsterball-style racer. Web launch first (own site + portals such as CrazyGames/Poki), then a Roblox port. Online rooms of 2–16 players you create and join with a code. Small team (2–4 people).
 
 **Full roadmap:** `~/.claude/plans/if-i-need-to-dazzling-oasis.md`
-**Last updated:** 2026-09-24
+**Last updated:** 2026-10-10
 
 ## Status at a glance
 
@@ -118,6 +118,20 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
   - Edges that already have rails, walls or more floor beside them are skipped.
   - Arenas stay open.
   - Bots now check that the way on is clear before taking a lane into a tight spot.
+- [x] **Paced courses, combos, forks and stars** (2026-10-10). Courses used to draw every segment from one fixed mix, so each felt the same from start to finish:
+  - **Acts:** every generated course now runs intro (the signature mechanic, gently, with breathers) → build-up (mixed in, getting harder; a breather after two hard segments) → twist (a fork and combos) → finale (the signature at its hardest, right before the goal).
+  - **Difficulty ramp:** each segment takes a difficulty (0–1) that narrows bridges, widens gaps, and speeds up sweepers, belts, crumbling and wind.
+  - **6 combo segments** (two mechanics at once): a belt under a sweeper, crumbling tiles in a crosswind, a spring onto a launch strip, a lift up to a windy bridge, a down-belt between bumpers, a run-up that crumbles behind you.
+  - **Risk/reward forks:** a railed detour, or a straight line half as long across a narrow beam or crumbling tiles with no safety walls (`open: true` pieces).
+  - **Stars:** 3 per race course (28 courses, mazes included), off the safe line. They show in the HUD, on the results screen and on the level-select maps, and are saved per course in the browser (not in multiplayer). Gold times account for the faster risky lines.
+  - **Star route:** each level has a `starRoute` for bots and tests. Tests check that a bot collects all 3 stars with no falls on every course, and that the server's anti-cheat accepts star-route runs. The editor's bot check runs it too.
+  - All 24 generated race courses were regenerated; Warm-Up, Zig-Zag and Sweeper Alley keep their hand-made openings.
+- [x] **Course feedback for playtests** (2026-10-10). `?playtest` asks after every finish (fun, difficulty, length, stars, variety, the most frustrating spot on the map, a comment) and why on every quit; normal players get an optional Rate button. Every run also records where the ball fell, checkpoint times, restarts and stars. Kept in the browser and exportable (works offline), and sent with stats consent. `npm run analytics` reports it per course (also from exported files), and `/feedback.html` shows each course's map with falls and marked spots.
+- [x] **Star challenges tied to each mechanic** (2026-10-10). Every star now asks you to use the segment it's on harder or differently: a super spring, a jump's edge line, a swerve in low gravity, a crumbling side tile, a downwind ledge, a tightrope, a fast belt lane, and more (17 kinds; see README "Stars").
+  - **Riding stars** move with a sweeper's tip or their own lift beside the tower; **switch stars** appear for a few seconds after you roll over a red button (a ⏱ timer in the HUD), e.g. at a fork's exit where only the shortcut beats the clock.
+  - Stars go to the course's own mechanics first; a course never repeats a kind; the careful bot on the safe line gets none. Spur fallbacks dropped from about 2 per course to 8 across all 72 race-course stars.
+  - A glow behind every star so it stands out (against yellow sweeper arms especially). Editor fields for all of it; `catch` route points for riding stars.
+  - All 24 generated courses regenerated again (layouts and medal times changed).
 - [x] **Top-down camera:** C cycles chase → fixed → top-down (also in Settings). Mazes start in top-down (`"camera": "topdown"` on the level). Top-down keeps its heading when you respawn.
 - [x] **Static level geometry merged** into one mesh per floor palette and wall colour (in the game; the editor keeps one mesh per piece). The busiest new course went from 329 to 43 draw calls, and Warm-Up from 120 to 61.
 - [x] **Tests:** 284 unit and integration (a physics test per mechanic; safety walls; all 28 courses: careful bot with no falls, outer-lane bots, crowd race, anti-cheat replay; maze and curve generators; camera cycling) + 12 browser tests (level select maps and theme groups, mazes starting top-down, C cycling).
@@ -223,6 +237,9 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 - **Exit test:** 16-player races at 150 ms lag feel fair; one server handles 50+ rooms
 
 ### M3: Content and modes (remaining)
+- [ ] **Playtest the pacing and stars:** do intros feel too easy, finales too hard? Are forks tempting, and stars worth the detour? Tune the act shares and difficulty ranges in `planSlots` (`src/levels/generator.ts`) and the per-segment `mix(...)` values.
+- [ ] **Playtest the star challenges:** the switch-star timers (1.2× the bot's time) and the riding-star catches are tuned for bots; check they feel fair but not free for players. Treadmills, `sweeperBelt` and `slalom` still offer no star; 8 courses still use one spur.
+- [ ] **Stars beyond the browser:** count them on the server (the solo replay already has the path), pay XP for them, add "collect N stars" daily challenges, and decide on stars in multiplayer.
 - [ ] **Polish the 17 generated courses and 4 mazes** in the editor. They're playable and bot-verified, but generic. The generator now makes curves, jumps and split paths; hand-made set pieces are still missing.
 - [ ] **Check course length with players:** most races now take 40–100 s. Elimination (up to 7 rounds) could run long, so consider shorter courses for Elimination or fewer rounds.
 - [ ] **Tune the mechanics with players:** boost speed, spring power, belt pull, crumble timing, wind strength, low gravity. All values are in `SIM` or on the pieces.
@@ -286,11 +303,14 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 - **Invite links assume the server** is on the same host at port 2567 unless `VITE_SERVER_URL` is set.
 - **A lost token means lost progress** unless the player saved their recovery code. The UI shows it in Settings, but consider prompting players to save it after they first reach level 3.
 - **Rate limits are per server process, in memory.** Multiple processes need a shared store (Redis).
+- **The editor can't edit `starRoute`:** moving pieces a star route passes through means editing the JSON or regenerating. Check with bot reports a broken star route.
+- **Stars are browser-only,** like best times: clearing site data loses them, and the server doesn't know about them.
 - **Ad rewards can't be verified by the server** (portal SDKs don't provide receipts), so they're capped per day instead.
 
 ## Decisions log
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-10 | Each star challenge uses its segment's own mechanic; riding and switch stars added | Generic spur stars were the same on every course; the bot must still collect every star, and the safe line none |
 | 2026-09-24 | Web first, Roblox later | Prove the game and build an audience cheaply; Roblox is the likely bigger earner |
 | 2026-09-24 | Online rooms of 2–16 players, joined by code | The core social hook; Quick Play bots avoid empty lobbies |
 | 2026-09-24 | TypeScript + Three.js + Rapier | Type safety for a team; fast physics with continuous collision detection; runs in the browser and on a Node server |
@@ -298,6 +318,8 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 | 2026-09-24 | Levels built from boxes and cylinders, stored as JSON | Map straight onto Roblox Parts; lets us build a level editor |
 | 2026-09-24 | Only floors have friction | Stops spinning balls from climbing walls and bumpers |
 | 2026-09-24 | No free-text chat (preset quick-chat and emotes only) | Kids play on portals and Roblox; avoids most moderation and child-privacy risk |
+| 2026-10-10 | Courses paced in acts (intro → build-up → twist → finale) with a difficulty ramp | Each course used to repeat one mechanic at one difficulty from start to finish |
+| 2026-10-10 | Stars: 3 per course, saved locally, solo only; risky lines have no safety walls | A replay goal and a reason to take risks, without touching the economy or anti-cheat yet |
 | 2026-09-24 | Level editor is a separate page (`editor.html`) | Keeps editor code out of the game download; anyone on the team can use it in a browser |
 | 2026-09-24 | Menus are HTML, not drawn in 3D | Fast to build, accessible, keyboard and gamepad focus for free |
 | 2026-09-24 | Medal times start from the bot's time | Guarantees every level is winnable; tune with real players |

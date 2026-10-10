@@ -17,6 +17,8 @@ export interface PadPiece {
   d: number;
   thickness?: number;
   palette?: Palette;
+  /** No safety walls (guard.ts): a risky line, meant to be fallen off. */
+  open?: boolean;
 }
 
 export interface PathPiece {
@@ -27,6 +29,8 @@ export interface PathPiece {
   thickness?: number;
   palette?: Palette;
   rails?: boolean;
+  /** No safety walls (guard.ts): a risky line, meant to be fallen off. */
+  open?: boolean;
 }
 
 export interface BlockPiece {
@@ -108,6 +112,8 @@ export interface ConveyorPiece {
   width: number;
   speed?: number; // default 12
   rails?: boolean;
+  /** No safety walls (a risky line). */
+  open?: boolean;
 }
 
 /** A floor tile that gives way `delay` s after you touch it, and comes back `respawn` s later. */
@@ -118,6 +124,8 @@ export interface CrumblePiece {
   d: number;
   delay?: number;   // default 0.6
   respawn?: number; // default 4
+  /** No safety walls (guard.ts). */
+  open?: boolean;
 }
 
 /** Wind inside a box: pushes balls along `dir` up to `speed` (updrafts, crosswinds). */
@@ -138,9 +146,28 @@ export interface LowGravPiece {
   scale?: number; // fraction of normal gravity, default 0.35
 }
 
+/**
+ * A collectible star (race courses: 3, off the safe line). Not solid; touching it collects it.
+ * A star can ride a mechanism (slide like a mover, or circle like a sweeper arm's tip), or be a
+ * switch star: hidden until you roll over its button, then there for `time` seconds.
+ */
+export interface StarPiece {
+  type: 'star';
+  position: Vec3; // the star's centre at t = 0 (floor + about 1.5 for one sitting on the floor)
+  /** Slides to `to` and back every `period` seconds, eased exactly like a mover. */
+  to?: Vec3;
+  period?: number;
+  /** Circles `center` about +Y at `speed` rad/s, like a sweeper arm. */
+  center?: Vec3;
+  speed?: number;
+  /** A floor switch (floor point): the star shows for `time` seconds (default 6) after it's pressed. */
+  button?: Vec3;
+  time?: number;
+}
+
 export type Piece =
   | PadPiece | PathPiece | BlockPiece | BumperPiece | SweeperPiece | MoverPiece | CheckpointPiece | GoalPiece | ZonePiece
-  | BoostPiece | SpringPiece | ConveyorPiece | CrumblePiece | WindPiece | LowGravPiece;
+  | BoostPiece | SpringPiece | ConveyorPiece | CrumblePiece | WindPiece | LowGravPiece | StarPiece;
 
 /** Race courses have a goal and a route; arenas (party modes) have hill zones instead. */
 export type LevelKind = 'race' | 'arena';
@@ -149,6 +176,8 @@ export type LevelKind = 'race' | 'arena';
 export interface RoutePoint {
   p: Vec3;
   wait?: boolean;
+  /** Hold here until a star is collected (riding stars come to you). */
+  catch?: boolean;
   speed?: number;
   /** Max sideways offset bots may take here (0 = tight spot: racing line only). */
   lane?: number;
@@ -177,6 +206,8 @@ export interface LevelData {
   start: { position: Vec3; yaw?: number };
   pieces: Piece[];
   route?: RoutePoint[];
+  /** A second bot route that collects every star (taking the risky lines). For tests and the editor. */
+  starRoute?: RoutePoint[];
 }
 
 // ---------- Validation ----------
@@ -218,10 +249,10 @@ function bool(o: Obj, key: string, path: string) {
 }
 
 const pieceValidators: Record<Piece['type'], (o: Obj, path: string) => void> = {
-  pad(o, p) { vec3(o, 'center', p); positive(o, 'w', p); positive(o, 'd', p); positive(o, 'thickness', p, true); palette(o, p); },
+  pad(o, p) { vec3(o, 'center', p); positive(o, 'w', p); positive(o, 'd', p); positive(o, 'thickness', p, true); palette(o, p); bool(o, 'open', p); },
   path(o, p) {
     vec3(o, 'from', p); vec3(o, 'to', p); positive(o, 'width', p); positive(o, 'thickness', p, true);
-    palette(o, p); bool(o, 'rails', p);
+    palette(o, p); bool(o, 'rails', p); bool(o, 'open', p);
   },
   block(o, p) {
     vec3(o, 'position', p); vec3(o, 'size', p); num(o, 'yaw', p, true);
@@ -240,8 +271,8 @@ const pieceValidators: Record<Piece['type'], (o: Obj, path: string) => void> = {
   spring(o, p) {
     vec3(o, 'position', p); positive(o, 'radius', p, true); positive(o, 'power', p, true); num(o, 'yaw', p, true); num(o, 'push', p, true);
   },
-  conveyor(o, p) { vec3(o, 'from', p); vec3(o, 'to', p); positive(o, 'width', p); num(o, 'speed', p, true); bool(o, 'rails', p); },
-  crumble(o, p) { vec3(o, 'center', p); positive(o, 'w', p); positive(o, 'd', p); positive(o, 'delay', p, true); positive(o, 'respawn', p, true); },
+  conveyor(o, p) { vec3(o, 'from', p); vec3(o, 'to', p); positive(o, 'width', p); num(o, 'speed', p, true); bool(o, 'rails', p); bool(o, 'open', p); },
+  crumble(o, p) { vec3(o, 'center', p); positive(o, 'w', p); positive(o, 'd', p); positive(o, 'delay', p, true); positive(o, 'respawn', p, true); bool(o, 'open', p); },
   wind(o, p) {
     vec3(o, 'center', p); vec3(o, 'size', p); vec3(o, 'dir', p); positive(o, 'speed', p, true); positive(o, 'strength', p, true);
     const d = o.dir as number[];
@@ -252,7 +283,32 @@ const pieceValidators: Record<Piece['type'], (o: Obj, path: string) => void> = {
     const s = o.scale as number | undefined;
     if (s !== undefined && (s < 0 || s >= 1)) fail(`${p}.scale`, 'expected 0 ≤ scale < 1');
   },
+  star(o, p) {
+    vec3(o, 'position', p);
+    const has = (k: string) => o[k] !== undefined;
+    for (const k of ['to', 'center', 'button']) if (has(k)) vec3(o, k, p);
+    positive(o, 'period', p, true); num(o, 'speed', p, true); positive(o, 'time', p, true);
+    if (has('to') !== has('period')) fail(p, 'a sliding star needs both "to" and "period"');
+    if (has('center') !== has('speed')) fail(p, 'a circling star needs both "center" and "speed"');
+    if (has('to') && has('center')) fail(p, 'a star can slide or circle, not both');
+    if (has('time') && !has('button')) fail(`${p}.time`, 'needs a "button"');
+  },
 };
+
+function route(root: Obj, key: 'route' | 'starRoute') {
+  const list = root[key];
+  if (list === undefined) return;
+  if (!Array.isArray(list)) fail(`level.${key}`, 'expected an array');
+  list.forEach((raw, i) => {
+    const path = `level.${key}[${i}]`;
+    const o = obj(raw, path);
+    vec3(o, 'p', path);
+    bool(o, 'wait', path);
+    bool(o, 'catch', path);
+    positive(o, 'speed', path, true);
+    num(o, 'lane', path, true);
+  });
+}
 
 /** Validates untrusted JSON (e.g. from the editor or a file) and returns it typed. */
 export function parseLevel(json: unknown): LevelData {
@@ -292,17 +348,9 @@ export function parseLevel(json: unknown): LevelData {
     if (count('goal') !== 1) fail('level.pieces', `expected exactly 1 goal, found ${count('goal')}`);
     if (count('zone') !== 0) fail('level.pieces', 'zones are for arenas (set "kind": "arena")');
   }
+  if (root.kind === 'arena' && count('star') !== 0) fail('level.pieces', 'stars are for race courses');
 
-  if (root.route !== undefined) {
-    if (!Array.isArray(root.route)) fail('level.route', 'expected an array');
-    root.route.forEach((raw, i) => {
-      const path = `level.route[${i}]`;
-      const o = obj(raw, path);
-      vec3(o, 'p', path);
-      bool(o, 'wait', path);
-      positive(o, 'speed', path, true);
-      num(o, 'lane', path, true);
-    });
-  }
+  route(root, 'route');
+  route(root, 'starRoute');
   return root as unknown as LevelData;
 }

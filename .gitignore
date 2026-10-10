@@ -56,3 +56,6 @@ Thumbs.db
 .idea/
 *.swp
 *~
+
+# ---------- Local AI assistant notes (kept local for now) ----------
+CLAUDE.md

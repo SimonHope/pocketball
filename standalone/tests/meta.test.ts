@@ -237,6 +237,21 @@ describe('analytics report', () => {
     expect(r.sessionMinutes.median).toBeGreaterThan(0);
     expect(r.levels).toEqual([{ level: 'warm-up', starts: 2, finishes: 1, quits: 1, finishRate: 0.5 }]);
   });
+
+  it('course feedback: from stored events and exported files, current layouts only', async () => {
+    const { computeReport } = await import('../server/meta/report');
+    const { levelVersion } = await import('../src/meta/feedback');
+    const m = fresh();
+    const v = levelVersion(LEVELS[0]), level = levelId(LEVELS[0]);
+    m.logEvents('A', 'a1', [
+      { name: 'level_feedback', t: clock, props: { level, v, fun: 4, difficulty: 'hard' } },
+      { name: 'level_feedback', t: clock, props: { level, v: 'stale', fun: 1 } },
+    ]);
+    const fromFile = [{ name: 'level_feedback', t: clock, props: { level, v, fun: 2, comment: 'lost at the fork' } }];
+    const r = computeReport(m.store.db, clock, fromFile);
+    expect(r.feedback).toHaveLength(1);
+    expect(r.feedback[0]).toMatchObject({ level, v, ratings: 2, fun: 3, comments: ['lost at the fork'] });
+  });
 });
 
 describe('delete my data', () => {

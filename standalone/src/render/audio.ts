@@ -59,5 +59,8 @@ export const sfx = {
     tone({ freq: 720, to: 540, dur: 0.12, type: 'triangle', gain: 0.08, delay: 0.16 });
   },
   crumble: () => tone({ freq: 140, to: 60, dur: 0.25, type: 'square', gain: 0.06 }),
+  click: () => tone({ freq: 1200, to: 900, dur: 0.06, type: 'square', gain: 0.1 }), // a switch star's button
+  tick: () => tone({ freq: 1500, dur: 0.04, type: 'square', gain: 0.07 }),
+  star: () => [988, 1319, 1976].forEach((f, i) => tone({ freq: f, dur: 0.16, type: 'triangle', gain: 0.13, delay: i * 0.06 })),
   finish: () => [523, 659, 784, 1047].forEach((f, i) => tone({ freq: f, dur: 0.25, gain: 0.15, delay: i * 0.12 })),
 };

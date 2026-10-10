@@ -48,6 +48,13 @@ export interface Marker {
   yaw?: number; // radians
 }
 
+/** A collectible star: where it is at t = 0, how it moves, and its switch if it has one. */
+export interface StarMarker extends Marker {
+  motion?: { kind: 'oscillate'; to: Vec3; period: number } | { kind: 'spin'; center: Vec3; speed: number };
+  /** Switch stars: the button's floor point and how long the star stays after it's pressed. */
+  button?: { position: Vec3; time: number };
+}
+
 export interface ResolvedLevel {
   name: string;
   start: { position: Vec3; yaw: number };
@@ -59,7 +66,11 @@ export interface ResolvedLevel {
   goal: { piece: number; position: Vec3; radius: number } | null;
   /** Arenas only: hill zones for King of the Hill. */
   zones: { piece: number; position: Vec3; radius: number }[];
+  /** Collectible stars (centre points at t = 0). */
+  stars: StarMarker[];
   route: RoutePoint[];
+  /** Route that collects every star (empty if the level has none). */
+  starRoute: RoutePoint[];
   medals?: Medals;
   theme: ThemeName;
 }
@@ -77,6 +88,7 @@ export function resolveLevel(level: LevelData): ResolvedLevel {
   const checkpoints: Marker[] = [];
   let goal: ResolvedLevel['goal'] = null;
   const zones: ResolvedLevel['zones'] = [];
+  const stars: StarMarker[] = [];
   const volumes: Volume[] = [];
   let pieceIndex = 0;
   const addSolid = (s: Omit<Solid, 'id' | 'piece'>) => { solids.push({ ...s, id: solids.length, piece: pieceIndex }); };
@@ -236,6 +248,15 @@ export function resolveLevel(level: LevelData): ResolvedLevel {
       case 'zone':
         zones.push({ piece: i, position: piece.position, radius: piece.radius ?? 4 });
         break;
+      case 'star':
+        stars.push({
+          piece: i,
+          position: piece.position,
+          ...(piece.to && piece.period ? { motion: { kind: 'oscillate' as const, to: piece.to, period: piece.period } } : {}),
+          ...(piece.center && piece.speed !== undefined ? { motion: { kind: 'spin' as const, center: piece.center, speed: piece.speed } } : {}),
+          ...(piece.button ? { button: { position: piece.button, time: piece.time ?? 6 } } : {}),
+        });
+        break;
     }
   }
 
@@ -250,7 +271,9 @@ export function resolveLevel(level: LevelData): ResolvedLevel {
     volumes,
     checkpoints,
     goal,
+    stars,
     route: level.route ?? [],
+    starRoute: level.starRoute ?? [],
     medals: level.medals,
     theme: level.theme ?? 'meadow',
   };
@@ -272,6 +295,14 @@ export function gridSpot(level: ResolvedLevel, slot: number): Vec3 {
   return add(level.start.position, add(scale(right, col * 2.3), scale(back, row * 2.4)));
 }
 
+/** Oscillating motion: starts at `from`, eases to `to` and back once per period. */
+function oscillate(from: Vec3, to: Vec3, period: number, t: number): { position: Vec3; velocity: Vec3 } {
+  const omega = (Math.PI * 2) / period;
+  const mid = lerp(from, to, 0.5);
+  const amp = scale(sub(to, from), 0.5);
+  return { position: add(mid, scale(amp, -Math.cos(omega * t))), velocity: scale(amp, Math.sin(omega * t) * omega) };
+}
+
 /** Pose of a solid at time `t` (seconds). Static solids return their initial pose. */
 export function poseAt(solid: Solid, t: number): Pose {
   const m = solid.motion;
@@ -279,13 +310,13 @@ export function poseAt(solid: Solid, t: number): Pose {
   if (m.kind === 'spin') {
     return { position: solid.position, rotation: mulQuat(yawPitch(m.speed * t), solid.rotation), velocity: [0, 0, 0] };
   }
-  // Oscillate: starts at `from`, eases to `to` and back once per period.
-  const omega = (Math.PI * 2) / m.period;
-  const mid = lerp(m.from, m.to, 0.5);
-  const amp = scale(sub(m.to, m.from), 0.5);
-  return {
-    position: add(mid, scale(amp, -Math.cos(omega * t))),
-    rotation: solid.rotation,
-    velocity: scale(amp, Math.sin(omega * t) * omega),
-  };
+  return { ...oscillate(m.from, m.to, m.period, t), rotation: solid.rotation };
+}
+
+/** Where a star is at time `t`: riding stars move exactly in step with the mover or arm they copy. */
+export function starAt(star: StarMarker, t: number): Vec3 {
+  const m = star.motion;
+  if (!m) return star.position;
+  if (m.kind === 'oscillate') return oscillate(star.position, m.to, m.period, t).position;
+  return add(m.center, rotate(sub(star.position, m.center), yawPitch(m.speed * t)));
 }

@@ -21,6 +21,7 @@ export const PIECE_FIELDS: Record<Piece['type'], Field[]> = {
     { key: 'd', kind: 'number', label: 'Depth (z)' },
     { key: 'thickness', kind: 'number', optional: true },
     { key: 'palette', kind: 'palette', optional: true },
+    { key: 'open', kind: 'bool', label: 'No safety walls', optional: true },
   ],
   path: [
     { key: 'from', kind: 'vec3' },
@@ -29,6 +30,7 @@ export const PIECE_FIELDS: Record<Piece['type'], Field[]> = {
     { key: 'thickness', kind: 'number', optional: true },
     { key: 'rails', kind: 'bool', optional: true },
     { key: 'palette', kind: 'palette', optional: true },
+    { key: 'open', kind: 'bool', label: 'No safety walls', optional: true },
   ],
   block: [
     { key: 'position', kind: 'vec3', label: 'Center' },
@@ -86,6 +88,7 @@ export const PIECE_FIELDS: Record<Piece['type'], Field[]> = {
     { key: 'width', kind: 'number' },
     { key: 'speed', kind: 'number', optional: true, step: 1 },
     { key: 'rails', kind: 'bool', optional: true },
+    { key: 'open', kind: 'bool', label: 'No safety walls', optional: true },
   ],
   crumble: [
     { key: 'center', kind: 'vec3', label: 'Top center' },
@@ -93,6 +96,7 @@ export const PIECE_FIELDS: Record<Piece['type'], Field[]> = {
     { key: 'd', kind: 'number', label: 'Depth (z)' },
     { key: 'delay', kind: 'number', label: 'Falls after (s)', optional: true, step: 0.1 },
     { key: 'respawn', kind: 'number', label: 'Back after (s)', optional: true, step: 0.5 },
+    { key: 'open', kind: 'bool', label: 'No safety walls', optional: true },
   ],
   wind: [
     { key: 'center', kind: 'vec3', label: 'Box center' },
@@ -106,12 +110,22 @@ export const PIECE_FIELDS: Record<Piece['type'], Field[]> = {
     { key: 'size', kind: 'vec3' },
     { key: 'scale', kind: 'number', label: 'Gravity ×', optional: true, step: 0.05 },
   ],
+  star: [
+    { key: 'position', kind: 'vec3', label: 'Center' },
+    { key: 'to', kind: 'vec3', label: 'Slides to', optional: true },
+    { key: 'period', kind: 'number', label: 'Slide period (s)', optional: true, step: 0.5 },
+    { key: 'center', kind: 'vec3', label: 'Circles around', optional: true },
+    { key: 'speed', kind: 'number', label: 'Circle speed (rad/s)', optional: true, step: 0.1 },
+    { key: 'button', kind: 'vec3', label: 'Switch button', optional: true },
+    { key: 'time', kind: 'number', label: 'Shows for (s)', optional: true, step: 0.5 },
+  ],
 };
 
 export const ROUTE_FIELDS: Field[] = [
   { key: 'p', kind: 'vec3', label: 'Point' },
   { key: 'speed', kind: 'number', optional: true, step: 1 },
   { key: 'wait', kind: 'bool', label: 'Wait for platform', optional: true },
+  { key: 'catch', kind: 'bool', label: 'Wait for a star', optional: true },
   { key: 'lane', kind: 'number', label: 'Max bot lane', optional: true, step: 0.5 },
 ];
 
@@ -135,6 +149,7 @@ export function pieceTemplate(type: Piece['type'], at: Vec3): Piece {
     case 'crumble': return { type, center: at, w: 4, d: 4 };
     case 'wind': return { type, center: off(at, 0, 4, 0), size: [6, 8, 6], dir: [0, 1, 0] };
     case 'lowgrav': return { type, center: off(at, 0, 5, 0), size: [10, 10, 10] };
+    case 'star': return { type, position: off(at, 0, 1.5, 0) };
   }
 }
 

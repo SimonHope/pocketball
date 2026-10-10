@@ -32,14 +32,21 @@ export function buildForm(container: HTMLElement, obj: Obj, fields: Field[], onC
 
     switch (f.kind) {
       case 'vec3': {
-        const vec = (value as number[] | undefined) ?? [0, 0, 0];
+        // Optional points show blank until set; the first number typed starts from the
+        // object's own position (e.g. a star's button next to the star), and clearing all
+        // three removes the field.
+        const set = value as number[] | undefined;
+        const vec = set ?? (f.optional ? (obj.position as number[] | undefined) ?? [0, 0, 0] : [0, 0, 0]);
         const group = document.createElement('span');
         group.className = 'vec3';
-        vec.forEach((n, i) => group.append(numberInput(n, f.step ?? 0.5, (v) => {
+        const inputs = vec.map((n, i) => numberInput(set || !f.optional ? n : undefined, f.step ?? 0.5, (v) => {
+          if (f.optional && inputs.every((input) => input.value === '')) return onChange(f.key, undefined);
           const next = [...vec];
           next[i] = v ?? 0;
           onChange(f.key, next);
-        })));
+        }));
+        group.append(...inputs);
+        if (f.optional) row.title = 'Leave empty to leave it out';
         row.append(group);
         break;
       }

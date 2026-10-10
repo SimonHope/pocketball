@@ -12,7 +12,8 @@ Both describe what the game actually does. Placeholders are in [brackets].
 - **Game account:**
   - A random token and recovery code in the browser. The server stores only SHA-256 hashes of both.
   - Stored with it: generated name, XP, coins, unlocks, best times and daily-challenge progress.
-- **Anonymous stats** only after the player taps **OK** on a consent notice (changeable in Settings). They're tied to a random browser ID and cover gameplay events only (course start, finish or quit, match results, ad offers, graphics tier).
+- **Anonymous stats** only after the player taps **OK** on a consent notice (changeable in Settings). They're tied to a random browser ID and cover gameplay events only (course start, finish or quit with where the ball fell, match results, ad offers, graphics tier).
+- **Course ratings** are optional (a "Rate this course" button; taps only, no free text). They're kept in the browser and sent with the anonymous stats only if the player said yes. A free-text comment box exists only in playtest mode (`?playtest`), for testers we invite, so we don't collect free text from the public (who may be children).
 - **Error reports:** message, stack trace and page, with no ID.
 - **IP addresses:** seen by the server while connected and used briefly in memory for rate limiting. They're not stored.
 - **Purchases (own website only):**

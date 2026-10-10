@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ARENAS, courseDrop, LEVELS } from '../src/levels';
 import { parseLevel, LevelError } from '../src/levels/schema';
 import { formatLevel } from '../src/levels/format';
-import { generateLevel } from '../src/levels/generator';
+import { generateLevel, type Act, type GenOptions, type Segment, type StarKind } from '../src/levels/generator';
 import { generateMaze } from '../src/levels/maze';
 import { resolveLevel } from '../src/sim/geometry';
 import { add, rotate, scale, type Vec3 } from '../src/sim/math';
@@ -67,7 +67,9 @@ describe('formatLevel', () => {
 
   it('puts one piece per line', () => {
     const text = formatLevel(LEVELS[0]);
-    expect(text.split('\n').filter((l) => l.includes('"type": "bumper"'))).toHaveLength(5);
+    const bumpers = LEVELS[0].pieces.filter((p) => p.type === 'bumper').length;
+    expect(bumpers).toBeGreaterThan(0);
+    expect(text.split('\n').filter((l) => l.includes('"type": "bumper"'))).toHaveLength(bumpers);
   });
 });
 
@@ -155,7 +157,7 @@ describe('complex courses and mazes', () => {
     expect(blocks.length).toBeGreaterThan(10);
   });
 
-  it('generated courses use the new pieces', () => {
+  it('generated courses use the new pieces (old flat draw, no acts or stars)', () => {
     const opts = { name: 'T', theme: 'meadow' as const, length: 8, weights: { curve: 1, hairpin: 1, jump: 1, split: 1, stairs: 1, gauntlet: 1 } };
     let level = null;
     for (let seed = 1; !level && seed < 50; seed++) level = generateLevel({ ...opts, seed });
@@ -164,5 +166,120 @@ describe('complex courses and mazes', () => {
     // Curves are angled paths: some path isn't axis-aligned.
     const angled = level!.pieces.some((p) => p.type === 'path' && p.from[0] !== p.to[0] && p.from[2] !== p.to[2]);
     expect(angled).toBe(true);
+  });
+});
+
+describe('stars', () => {
+  it('every race course hides 3 stars, with a star route to collect them', () => {
+    for (const level of LEVELS) {
+      const stars = level.pieces.filter((p) => p.type === 'star');
+      expect(stars, level.name).toHaveLength(3);
+      expect(level.starRoute, level.name).toBeDefined();
+      expect(JSON.stringify(level.starRoute), level.name).not.toBe(JSON.stringify(level.route)); // it takes other lines
+      expect(resolveLevel(level).stars).toHaveLength(3);
+    }
+  });
+
+  it('validates stars and the star route', () => {
+    const base = { format: 1, name: 'S', start: { position: [0, 1, 0] }, pieces: [{ type: 'goal', position: [0, 0, -5] }] };
+    expect(parseLevel({ ...base, pieces: [...base.pieces, { type: 'star', position: [0, 1.4, -2] }], starRoute: [{ p: [0, 0, -2] }] })).toBeTruthy();
+    expect(() => parseLevel({ ...base, starRoute: [{ p: [0, 0] }] })).toThrow(/starRoute\[0\]\.p/);
+    expect(() => parseLevel({ ...base, starRoute: {} })).toThrow(/starRoute/);
+    expect(() => parseLevel({ ...ARENAS[0], pieces: [...ARENAS[0].pieces, { type: 'star', position: [0, 1, 0] }] })).toThrow(/stars are for race courses/);
+  });
+
+  it('stars come in kinds: some ride a mechanism, some are switch stars', () => {
+    const stars = LEVELS.flatMap((l) => l.pieces).filter((p) => p.type === 'star');
+    expect(stars.some((p) => p.type === 'star' && (p.to || p.center))).toBe(true);
+    expect(stars.some((p) => p.type === 'star' && p.button && p.time)).toBe(true);
+    // Riding stars are caught at `catch` points on the star route.
+    expect(LEVELS.some((l) => l.starRoute?.some((wp) => wp.catch))).toBe(true);
+  });
+
+  it('stars can be left out (multiplayer)', async () => {
+    const { withoutStars } = await import('../src/levels');
+    const plain = withoutStars(LEVELS[0]);
+    expect(plain.pieces.some((p) => p.type === 'star')).toBe(false);
+    expect(plain.starRoute).toBeUndefined();
+    expect(LEVELS[0].pieces.some((p) => p.type === 'star')).toBe(true); // the original is untouched
+  });
+});
+
+describe('paced courses', () => {
+  const generate = (opts: Omit<GenOptions, 'seed'>) => {
+    for (let seed = 1; seed < 60; seed++) {
+      const plan: { seg: Segment; act: Act; d: number; star?: StarKind }[] = [];
+      const level = generateLevel({ ...opts, seed, onSegment: (seg, act, d, star) => plan.push({ seg, act, d, star }) });
+      if (level) return { level, plan };
+    }
+    throw new Error('no course in 60 seeds');
+  };
+  const paced: Omit<GenOptions, 'seed'> = {
+    name: 'T', theme: 'meadow', length: 12, stars: 3,
+    weights: { bridge: 2, curve: 1, straight: 1 },
+    acts: { intro: ['bridge'], twist: ['windCrumble'], finale: ['bridge'] },
+  };
+
+  it('runs intro → build-up → twist → finale, getting harder', () => {
+    const { plan } = generate(paced);
+    const acts = plan.filter((p) => p.seg !== 'starSpur').map((p) => p.act);
+    expect(acts[0]).toBe('intro');
+    expect(acts.at(-1)).toBe('finale');
+    expect(acts).toEqual([...acts].sort((a, b) => ['intro', 'build', 'twist', 'finale'].indexOf(a) - ['intro', 'build', 'twist', 'finale'].indexOf(b)));
+    expect(plan[0]).toMatchObject({ seg: 'bridge', d: 0 }); // the signature mechanic, gently
+    expect(plan.at(-1)).toMatchObject({ seg: 'bridge', d: 1 }); // and at its hardest
+    expect(plan.find((p) => p.act === 'twist')!.seg).toBe('fork');
+    // Breathers: never three hard segments in a row before the finale.
+    const calm = new Set(['straight', 'curve', 'turn']);
+    const beforeFinale = plan.filter((p) => p.act !== 'finale' && p.seg !== 'starSpur');
+    for (let i = 2; i < beforeFinale.length; i++) {
+      expect(calm.has(beforeFinale[i].seg) || calm.has(beforeFinale[i - 1].seg) || calm.has(beforeFinale[i - 2].seg)).toBe(true);
+    }
+  });
+
+  it('narrows bridges as the course goes on', () => {
+    const { level } = generate(paced);
+    // Plain bridges: orange paths with no rails that aren't a fork's risky beam.
+    const bridges = level.pieces.filter((p) => p.type === 'path' && p.palette === 'orange' && !p.rails && !p.open);
+    expect(bridges.length).toBeGreaterThanOrEqual(2);
+    const width = (p: (typeof bridges)[number]) => (p.type === 'path' ? p.width : 0);
+    expect(width(bridges[0])).toBeGreaterThan(width(bridges.at(-1)!));
+  });
+
+  it('forks give a risky line with no safety walls and a star; the star route takes it', () => {
+    const { level } = generate(paced);
+    expect(level.pieces.filter((p) => p.type === 'star')).toHaveLength(3);
+    expect(level.pieces.some((p) => (p.type === 'path' || p.type === 'crumble') && p.open)).toBe(true);
+    expect(level.starRoute).toBeDefined();
+    expect(JSON.stringify(level.starRoute)).not.toBe(JSON.stringify(level.route));
+    expect(parseLevel(JSON.parse(JSON.stringify(level)))).toBeTruthy();
+    // Same seed, same course.
+    const again = generateLevel({ ...paced, seed: 1 }), once = generateLevel({ ...paced, seed: 1 });
+    expect(JSON.stringify(again)).toBe(JSON.stringify(once));
+  });
+
+  it('stars use the course\'s mechanics first, and never the same kind twice', () => {
+    for (const opts of [paced, { ...paced, weights: { springUp: 2, lift: 2, curve: 1 }, acts: { intro: ['springUp'], twist: ['liftWind'], finale: ['springUp'] } } as typeof paced]) {
+      const { plan } = generate(opts);
+      const kinds = plan.flatMap((p) => (p.star ? [p.star] : []));
+      expect(kinds).toHaveLength(3);
+      const special = kinds.filter((k) => k !== 'spur');
+      expect(new Set(special).size).toBe(special.length);
+      // The first star is on the signature mechanic, in the intro.
+      expect(plan.find((p) => p.star)).toMatchObject({ act: 'intro', seg: opts.acts!.intro[0] });
+    }
+  });
+
+  it('mazes hide stars at the ends of side branches', () => {
+    const opts = { name: 'T', theme: 'meadow' as const, cols: 7, rows: 8, loops: 3, stars: 3 };
+    let level = null;
+    for (let seed = 1; !level && seed < 80; seed++) level = generateMaze({ ...opts, seed });
+    if (!level) throw new Error('no maze in 80 seeds');
+    expect(level.pieces.filter((p) => p.type === 'star')).toHaveLength(3);
+    expect(level.starRoute!.length).toBeGreaterThan(level.route!.length);
+    expect(level.starRoute!.at(-1)).toEqual(level.route!.at(-1)); // both end at the goal
+    // The farthest one is a switch star, its button at the junction on the way through.
+    const timed = level.pieces.filter((p) => p.type === 'star' && p.button);
+    expect(timed).toHaveLength(1);
   });
 });

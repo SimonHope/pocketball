@@ -1,3 +1,4 @@
+import type { RoutePoint } from '../levels/schema';
 import type { Vec3 } from './math';
 import type { Input, Simulation } from './simulation';
 
@@ -7,6 +8,7 @@ import type { Input, Simulation } from './simulation';
 const ARRIVE_RADIUS = 2;
 const EDGE_MARGIN = 1.3; // keep this much floor beyond the ball's side when taking a lane
 const SIDE_MARGIN = 1.1; // floor needed either side of a lane path
+const CATCH_PATIENCE = 12; // seconds to hold at a `catch` point before giving up on its star
 
 /** How a bot drives. The default (no style) is the careful test pilot. */
 export interface PilotStyle {
@@ -16,6 +18,8 @@ export interface PilotStyle {
   pace?: number;
   /** Steer around other balls ahead. */
   avoid?: boolean;
+  /** Which route to follow: the safe main line (default) or the one that collects every star. */
+  route?: 'main' | 'stars';
 }
 
 export class Autopilot {
@@ -23,18 +27,23 @@ export class Autopilot {
   private sawGap = false; // for `wait` points: has the floor been missing since we started waiting?
   private lastPos: [number, number, number] | null = null;
   private target: { index: number; p: Vec3 } | null = null; // current waypoint, shifted into our lane
+  private holding: { index: number; stars: number; since: number } | null = null; // at a `catch` point
 
   constructor(private sim: Simulation, private cruiseSpeed = 16, private style: PilotStyle = {}) {}
 
+  private get route(): RoutePoint[] {
+    return this.style.route === 'stars' ? this.sim.level.starRoute : this.sim.level.route;
+  }
+
   get done() {
-    return this.index >= this.sim.level.route.length;
+    return this.index >= this.route.length;
   }
 
   /** Continue from the waypoint nearest the ball (e.g. after respawning). */
   resync() {
     const pos = this.sim.position();
     let best = 0, bestDist = Infinity;
-    this.sim.level.route.forEach((wp, i) => {
+    this.route.forEach((wp, i) => {
       const d = Math.hypot(wp.p[0] - pos[0], wp.p[1] + 1 - pos[1], wp.p[2] - pos[2]);
       if (d < bestDist) { bestDist = d; best = i; }
     });
@@ -48,7 +57,7 @@ export class Autopilot {
    * route threads between obstacles, so the lane must be clear at the point and on the way there.
    */
   private lanePoint(i: number): Vec3 {
-    const route = this.sim.level.route;
+    const route = this.route;
     const wp = route[i];
     const limit = wp.lane ?? Infinity;
     const lane = Math.max(-limit, Math.min(limit, this.style.lane ?? 0));
@@ -77,8 +86,15 @@ export class Autopilot {
     return wp.p;
   }
 
+  /** At a `catch` point: has a star been collected since we got here (or have we waited long enough)? */
+  private caught(): boolean {
+    const count = this.sim.stars.filter(Boolean).length;
+    if (this.holding?.index !== this.index) this.holding = { index: this.index, stars: count, since: this.sim.time };
+    return count > this.holding.stars || this.sim.time - this.holding.since > CATCH_PATIENCE;
+  }
+
   input(): Input {
-    const route = this.sim.level.route;
+    const route = this.route;
     const pos = this.sim.position();
     const vel = this.sim.velocity();
     const ground = this.sim.groundVelocity;
@@ -94,6 +110,7 @@ export class Autopilot {
       const wp = this.target.p;
       const dist = Math.hypot(wp[0] - pos[0], wp[2] - pos[2]);
       if (dist < ARRIVE_RADIUS && Math.abs(pos[1] - 1 - wp[1]) < 3) {
+        if (route[this.index].catch && !this.caught()) break; // hold until the riding star comes by
         this.index++;
         this.sawGap = false;
       } else break;

@@ -4,7 +4,7 @@ import type { Vec3 } from '../sim/math';
 
 // A small top-down map of a course (level select cards). Drawn straight from the level's
 // pieces on a 2D canvas: floors shaded by height, walls, bumpers, sweeper circles, movers,
-// checkpoints, start and goal. The course runs up the map (-z is up).
+// checkpoints, stars, start and goal. The course runs up the map (-z is up).
 
 type XZ = [number, number];
 
@@ -49,10 +49,21 @@ function shade(hex: string, amount: number): string {
   return `rgb(${ch((n >> 16) & 255)}, ${ch((n >> 8) & 255)}, ${ch(n & 255)})`;
 }
 
-/** Draws `level` into `canvas`, fitted and centred. Uses the canvas's current pixel size. */
-export function drawCourseMap(canvas: HTMLCanvasElement, level: LevelData) {
+/** Where world points land on a drawn map (canvas pixels), and back: for marking spots on it. */
+export interface MapTransform {
+  /** Canvas pixels per world unit. */
+  scale: number;
+  toPx(x: number, z: number): [number, number];
+  toWorld(px: number, py: number): [number, number];
+}
+
+/**
+ * Draws `level` into `canvas`, fitted and centred. Uses the canvas's current pixel size.
+ * `found`: indices of the level's stars already collected (drawn gold; the rest as outlines).
+ */
+export function drawCourseMap(canvas: HTMLCanvasElement, level: LevelData, found: Set<number> = new Set()): MapTransform | null {
   const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+  if (!ctx) return null;
   const theme = THEMES[level.theme ?? 'meadow'];
   const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
@@ -64,7 +75,7 @@ export function drawCourseMap(canvas: HTMLCanvasElement, level: LevelData) {
     if (c) pts.push(...c);
     if (p.type === 'mover') pts.push(...(corners({ ...p, from: p.to }) ?? []));
   }
-  if (!pts.length) return;
+  if (!pts.length) return null;
   // Long courses that run up the map are turned sideways (course runs left → right) so they
   // fill the landscape card instead of a thin strip down the middle.
   const spanX = Math.max(...pts.map((p) => p[0])) - Math.min(...pts.map((p) => p[0]));
@@ -229,6 +240,36 @@ export function drawCourseMap(canvas: HTMLCanvasElement, level: LevelData) {
     }
   }
 
+  // Stars on top of everything: gold once found, outlined until then.
+  const glyph = Math.max(11, scale * 3.2);
+  ctx.font = `${glyph}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 2;
+  level.pieces.filter((p) => p.type === 'star').forEach((p, i) => {
+    if (p.button) {
+      // A switch star's button: a red dot, joined to its star by a faint dashed line.
+      const [bx, bz] = toPx(p.button[0], p.button[2]), [sx, sz] = toPx(p.position[0], p.position[2]);
+      ctx.save();
+      ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = 'rgba(230,57,70,0.6)';
+      ctx.beginPath();
+      ctx.moveTo(bx, bz);
+      ctx.lineTo(sx, sz);
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = '#e63946';
+      ctx.beginPath();
+      ctx.arc(bx, bz, Math.max(2.5, scale * 1.2), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const [x, z] = toPx(p.position[0], p.position[2]);
+    ctx.strokeStyle = 'rgba(27,27,27,0.8)';
+    ctx.strokeText('★', x, z);
+    ctx.fillStyle = found.has(i) ? '#ffd60a' : 'rgba(255,255,255,0.85)';
+    ctx.fillText('★', x, z);
+  });
+
   // Start: an arrow pointing along the start yaw.
   const s = level.start.position, yaw = level.start.yaw ?? 0;
   const [sx, sz] = toPx(s[0], s[2]);
@@ -246,4 +287,13 @@ export function drawCourseMap(canvas: HTMLCanvasElement, level: LevelData) {
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 1.5;
   ctx.stroke();
+
+  return {
+    scale,
+    toPx,
+    toWorld: (px, py) => {
+      const u = (px - ox) / scale + minX, v = (py - oz) / scale + minZ;
+      return sideways ? [v, -u] : [u, v];
+    },
+  };
 }

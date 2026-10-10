@@ -4,9 +4,9 @@ import { Simulation } from '../sim/simulation';
 import { GUARD_COLOR, type BlockPiece, type LevelData, type Piece } from './schema';
 
 // Safety walls: a low wall along every floor edge a ball could roll off, except where the
-// course means you to leave the floor (the route crosses the edge: jump lips, drops, stairs,
-// gaps to movers, lifts and updrafts). Edges that already have a rail, wall, or more floor
-// next to them are left alone. Run by `npm run add-walls` and by the course generator.
+// course means you to leave the floor (the route or star route crosses the edge: jump lips,
+// drops, stairs, gaps to movers, lifts and updrafts). Edges that already have a rail, wall, or
+// more floor next to them are left alone, and so are pieces marked `open` (risky lines). Run by `npm run add-walls` and by the course generator.
 // Needs initPhysics() first (it asks the physics world what's beyond each edge).
 
 export { GUARD_COLOR };
@@ -75,12 +75,14 @@ export function addSafetyWalls(level: LevelData): LevelData {
   // sweeper arm or platform that happens to be there at time 0 doesn't count as floor.
   const still = pieces.filter((p) => p.type !== 'mover' && p.type !== 'sweeper' && p.type !== 'bumper');
   const sim = new Simulation(resolveLevel({ ...base, pieces: still }));
-  const line: Vec3[] = [[level.start.position[0], level.start.position[1] - 1, level.start.position[2]], ...(level.route ?? []).map((r) => r.p)];
+  const startFloor: Vec3 = [level.start.position[0], level.start.position[1] - 1, level.start.position[2]];
+  const lines: Vec3[][] = [level.route, level.starRoute].filter((r) => r?.length).map((r) => [startFloor, ...r!.map((w) => w.p)]);
   const walls: BlockPiece[] = [];
   sim.step({ x: 0, z: 0 }); // physics queries only see colliders after the first step
   try {
     for (const piece of pieces) {
       if ((piece.type === 'path' || piece.type === 'conveyor') && piece.rails) continue;
+      if ((piece.type === 'path' || piece.type === 'pad' || piece.type === 'crumble' || piece.type === 'conveyor') && piece.open) continue;
       for (const e of edgesOf(piece)) {
         const len = Math.hypot(e.b[0] - e.a[0], e.b[2] - e.a[2]);
         if (len < 0.5) continue;
@@ -94,7 +96,7 @@ export function addSafetyWalls(level: LevelData): LevelData {
         }
         // Leave a gap where the route leaves the floor here (a jump, drop, or gap to cross).
         // Where it just carries on onto more floor, the edge there is covered anyway.
-        for (const t of crossings(e, line)) {
+        for (const t of lines.flatMap((line) => crossings(e, line))) {
           const at = Math.min(n - 1, Math.floor(t * n));
           if (!exposed[at]) continue;
           for (let i = 0; i < n; i++) if (Math.abs((i + 0.5) / n - t) * len < OPENING) exposed[i] = false;

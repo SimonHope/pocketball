@@ -70,6 +70,11 @@ export function courseMechanics(level: LevelData): string[] {
   ].filter((m): m is string => !!m);
 }
 
+/** The level with its stars taken out (multiplayer races don't have them). */
+export function withoutStars(level: LevelData): LevelData {
+  return { ...level, pieces: level.pieces.filter((p) => p.type !== 'star'), starRoute: undefined };
+}
+
 export function findLevel(id: string): LevelData | undefined {
   return [...LEVELS, ...ARENAS].find((l) => levelId(l) === id);
 }

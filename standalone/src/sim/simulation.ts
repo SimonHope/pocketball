@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { SIM } from '../config';
 import { THEMES } from '../levels/themes';
-import { poseAt, type ResolvedLevel, type Solid } from './geometry';
+import { poseAt, starAt, type ResolvedLevel, type Solid } from './geometry';
 import type { Quat, Vec3 } from './math';
 
 // The authoritative game simulation: physics world, the ball, and race rules.
@@ -21,6 +21,8 @@ export type SimEvent =
   | { type: 'countdown'; n: number }
   | { type: 'go' }
   | { type: 'checkpoint'; index: number }
+  | { type: 'star'; index: number }
+  | { type: 'switch'; index: number; time: number } // a switch star's button: it shows for `time` seconds
   | { type: 'fall'; penalty: number }
   | { type: 'out' }
   | { type: 'finish'; time: number }
@@ -61,6 +63,10 @@ export class Simulation {
   countdownLeft = 0;
   elapsed = 0;
   reached: boolean[] = [];
+  /** Stars collected this run (they stay collected after a fall; a restart resets them). */
+  stars: boolean[] = [];
+  /** Switch stars: `time` (the sim clock) until which each one shows; 0 = not pressed. */
+  switchUntil: number[] = [];
   spawn: { position: Vec3; yaw: number };
   grounded = false;
   groundVelocity: Vec3 = [0, 0, 0];
@@ -184,6 +190,8 @@ export class Simulation {
    */
   restart(countdown: number = SIM.countdown, start: Vec3 = this.level.start.position) {
     this.reached = this.level.checkpoints.map(() => false);
+    this.stars = this.level.stars.map(() => false);
+    this.switchUntil = this.level.stars.map(() => 0);
     this.spawn = { position: start, yaw: this.level.start.yaw };
     this.elapsed = 0;
     this.phase = 'countdown';
@@ -474,6 +482,29 @@ export class Simulation {
         this.events.push({ type: 'checkpoint', index: i });
       }
     });
+
+    if (this.phase === 'playing') {
+      const s2 = SIM.starRadius ** 2;
+      this.level.stars.forEach((star, i) => {
+        if (this.stars[i]) return;
+        if (star.button) {
+          // Rolling over the button (re)starts its timer once the last one has run out.
+          const b = star.button.position;
+          const bx = p[0] - b[0], bz = p[2] - b[2];
+          if (this.grounded && this.time >= this.switchUntil[i] && bx * bx + bz * bz < SIM.buttonRadius ** 2 && Math.abs(p[1] - 1 - b[1]) < 1) {
+            this.switchUntil[i] = this.time + star.button.time;
+            this.events.push({ type: 'switch', index: i, time: star.button.time });
+          }
+          if (this.time >= this.switchUntil[i]) return;
+        }
+        const at = starAt(star, this.time);
+        const dx = p[0] - at[0], dz = p[2] - at[2];
+        if (dx * dx + dz * dz < s2 && Math.abs(p[1] - at[1]) < 2) {
+          this.stars[i] = true;
+          this.events.push({ type: 'star', index: i });
+        }
+      });
+    }
 
     const g = this.level.goal;
     if (g && this.phase === 'playing') {
