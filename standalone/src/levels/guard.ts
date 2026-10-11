@@ -1,7 +1,7 @@
 import { resolveLevel } from '../sim/geometry';
 import type { Vec3 } from '../sim/math';
 import { Simulation } from '../sim/simulation';
-import { GUARD_COLOR, type BlockPiece, type LevelData, type Piece } from './schema';
+import { GUARD_COLOR, MOVING_PIECES, type BlockPiece, type LevelData, type Piece } from './schema';
 
 // Safety walls: a low wall along every floor edge a ball could roll off, except where the
 // course means you to leave the floor (the route or star route crosses the edge: jump lips,
@@ -73,7 +73,7 @@ export function addSafetyWalls(level: LevelData): LevelData {
 
   // What's beyond an edge is asked of a world without moving or knocking pieces, so a
   // sweeper arm or platform that happens to be there at time 0 doesn't count as floor.
-  const still = pieces.filter((p) => p.type !== 'mover' && p.type !== 'sweeper' && p.type !== 'bumper');
+  const still = pieces.filter((p) => !MOVING_PIECES.has(p.type) && p.type !== 'bumper' && p.type !== 'paper' && p.type !== 'ironball');
   const sim = new Simulation(resolveLevel({ ...base, pieces: still }));
   const startFloor: Vec3 = [level.start.position[0], level.start.position[1] - 1, level.start.position[2]];
   const lines: Vec3[][] = [level.route, level.starRoute].filter((r) => r?.length).map((r) => [startFloor, ...r!.map((w) => w.p)]);

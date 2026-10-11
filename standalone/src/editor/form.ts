@@ -102,6 +102,18 @@ export function buildForm(container: HTMLElement, obj: Obj, fields: Field[], onC
         row.append(input);
         break;
       }
+      case 'numbers': {
+        // A comma-separated list (e.g. a turntable's gap angles).
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = ((value as number[] | undefined) ?? []).join(', ');
+        input.addEventListener('change', () => {
+          const list = input.value.split(',').map((t) => t.trim()).filter(Boolean).map(Number).filter(Number.isFinite);
+          onChange(f.key, list.length ? list : f.optional ? undefined : []);
+        });
+        row.append(input);
+        break;
+      }
       case 'text': {
         const input = document.createElement('input');
         input.type = 'text';

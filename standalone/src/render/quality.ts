@@ -4,12 +4,12 @@
 export type QualityTier = 'high' | 'medium' | 'low';
 export type QualitySetting = 'auto' | QualityTier;
 
-export interface TierSettings { pixelRatio: number; shadows: boolean; shadowMap: number; trails: boolean }
+export interface TierSettings { pixelRatio: number; shadows: boolean; shadowMap: number; trails: boolean; motes: boolean; particles: number }
 
 export const TIERS: Record<QualityTier, TierSettings> = {
-  high: { pixelRatio: 2, shadows: true, shadowMap: 2048, trails: true },
-  medium: { pixelRatio: 1.5, shadows: true, shadowMap: 1024, trails: true },
-  low: { pixelRatio: 1, shadows: false, shadowMap: 512, trails: false },
+  high: { pixelRatio: 2, shadows: true, shadowMap: 2048, trails: true, motes: true, particles: 1 },
+  medium: { pixelRatio: 1.5, shadows: true, shadowMap: 1024, trails: true, motes: true, particles: 1 },
+  low: { pixelRatio: 1, shadows: false, shadowMap: 512, trails: false, motes: false, particles: 0.5 },
 };
 
 const ORDER: QualityTier[] = ['low', 'medium', 'high'];

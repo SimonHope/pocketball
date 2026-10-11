@@ -3,7 +3,10 @@ import { LEVELS } from '../src/levels';
 import { generateLevel, type Segment, type StarKind } from '../src/levels/generator';
 import { addSafetyWalls } from '../src/levels/guard';
 import type { LevelData } from '../src/levels/schema';
+import { SIM } from '../src/config';
+import { MoveChecker } from '../src/net/rules';
 import { Autopilot, type PilotStyle } from '../src/sim/autopilot';
+import { resolveLevel } from '../src/sim/geometry';
 import { initPhysics } from '../src/sim/simulation';
 import { makeSim, skipCountdown } from './helpers';
 
@@ -98,17 +101,22 @@ describe('bots with styles', () => {
 });
 
 /** Races the careful autopilot (or `style`) over `level`: finished, time, falls and stars. */
-async function race(level: LevelData, style: PilotStyle = {}) {
+async function race(level: LevelData, style: PilotStyle = {}, { wait = 0 } = {}) {
   const sim = await makeSim(level);
   try {
     skipCountdown(sim);
+    for (let t = 0; t < wait; t += 1 / 120) sim.step({ x: 0, z: 0 }); // set off later (moving pieces elsewhere in their cycle)
+    sim.drainEvents();
     const pilot = new Autopilot(sim, 16, style);
     let falls = 0;
-    for (let t = 0; t < 300 && sim.phase !== 'finished'; t += 1 / 120) {
+    // The run as the server sees it: 20 updates a second, from GO.
+    const updates: { t: number; p: [number, number, number]; v: [number, number, number] }[] = [{ t: -20, p: sim.position(), v: sim.velocity() }];
+    for (let step = 1; step <= 300 * 120 && sim.phase !== 'finished'; step++) {
       sim.step(pilot.input());
       falls += sim.drainEvents().filter((e) => e.type === 'fall').length;
+      if (step % 6 === 0) updates.push({ t: (wait + step * SIM.dt) * 1000, p: sim.position(), v: sim.velocity() });
     }
-    return { finished: sim.phase === 'finished', time: sim.elapsed, falls, stars: sim.stars.filter(Boolean).length, waypoint: pilot.index };
+    return { finished: sim.phase === 'finished', time: sim.elapsed, falls, stars: sim.stars.filter(Boolean).length, waypoint: pilot.index, updates };
   } finally {
     sim.dispose();
   }
@@ -131,8 +139,10 @@ describe('star challenges', () => {
     'springUp', 'jump', 'crumbleJump', 'boostJump', 'moonJump', 'updraft', 'drop', 'crumbleBridge', 'windCrumble', 'windBridge',
     'bridge', 'split', 'zigzag', 'gauntlet', 'sweeper', 'lift', 'mover', 'fork', 'hairpin', 'spiral', 'steep', 'cascade',
     'boostRamp', 'conveyor',
+    'brakePad', 'pinball', 'keys', 'turntable', 'pendulum', 'rocker', 'rollers', 'paperWall',
+    'ironBall', 'wheel', 'trickGates', 'logSlope',
   ];
-  const timed = new Set<StarKind>(['firstRide', 'race', 'noBrake']);
+  const timed = new Set<StarKind>(['firstRide', 'race', 'noBrake', 'smash', 'climb']);
   it.each(segments)('%s hides its own star and the star route gets it', async (seg) => {
     await initPhysics(); // addSafetyWalls asks the physics world about edges
     let result = '';
@@ -151,6 +161,37 @@ describe('star challenges', () => {
         : `seed ${seed} (${kind}): stars=${risky.stars} falls=${risky.falls} safe line stars=${safe?.stars}`;
     }
     expect(result).toBe('ok');
+  });
+});
+
+describe('moving-floor segments', () => {
+  // Turntables, piano keys, pendulums, rockers, rollers, sliding bumpers, paper walls, the brake
+  // pad, the iron ball, the spin wheel, trick gates and the log slope: at their easiest and hardest, the careful bot (and bots out in the side lanes,
+  // setting off at different moments) gets through with no falls, and the server accepts the run.
+  const segments: Segment[] = [
+    'brakePad', 'pinball', 'keys', 'turntable', 'pendulum', 'rocker', 'rollers', 'paperWall', 'ironBall', 'wheel', 'trickGates', 'logSlope',
+  ];
+  const cases = segments.flatMap((seg) => [0, 1].map((d) => [seg, d] as const));
+  it.each(cases)('%s at difficulty %d', async (seg, d) => {
+    await initPhysics(); // addSafetyWalls asks the physics world about edges
+    const problems: string[] = [];
+    let built = 0;
+    for (let seed = 1; seed < 30 && built < 3; seed++) {
+      const used: Segment[] = [];
+      const raw = generateLevel({ seed, name: seg, theme: 'meadow', length: 3, difficulty: d, weights: { [seg]: 3, straight: 1 }, onSegment: (s) => used.push(s) });
+      if (!raw || !used.includes(seg)) continue;
+      built++;
+      const level = addSafetyWalls(raw), resolved = resolveLevel(level);
+      for (const [style, wait] of [[{}, 0], [{ lane: 2.5 }, 0.7], [{ lane: -2.5, pace: 0.85 }, 1.9]] as const) {
+        const r = await race(level, style, { wait });
+        if (!r.finished || r.falls) problems.push(`seed ${seed} ${JSON.stringify(style)}: finished=${r.finished} falls=${r.falls} waypoint=${r.waypoint}`);
+        const checker = new MoveChecker(resolved, 0);
+        const rejected = r.updates.map((u) => checker.check(u, u.t + 40)).filter((c) => !c.ok);
+        if (rejected.length) problems.push(`seed ${seed}: server rejected ${JSON.stringify(rejected[0])}`);
+      }
+    }
+    expect(built).toBe(3);
+    expect(problems).toEqual([]);
   });
 });
 

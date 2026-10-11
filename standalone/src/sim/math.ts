@@ -42,3 +42,12 @@ export function yawPitch(yaw: number, pitch = 0): Quat {
 }
 
 export const degToRad = (d: number) => (d * Math.PI) / 180;
+
+/** The inverse of a unit quaternion. */
+export const conjugate = (q: Quat): Quat => [-q[0], -q[1], -q[2], q[3]];
+
+/** Rotation by `angle` radians about the unit vector `axis`. */
+export function axisAngle(axis: Vec3, angle: number): Quat {
+  const s = Math.sin(angle / 2);
+  return [axis[0] * s, axis[1] * s, axis[2] * s, Math.cos(angle / 2)];
+}

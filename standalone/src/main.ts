@@ -15,6 +15,10 @@ import { DRAFT_KEY, load } from './render/storage';
 import { SettingsStore } from './render/settings';
 import { AutoQuality, TIERS, type QualitySetting, type QualityTier } from './render/quality';
 import { TrailView } from './render/cosmetics-view';
+import { Motes, SUN_OFFSET } from './render/backdrop';
+import { prewarmLooks } from './render/prewarm';
+import { Effects } from './render/effects';
+import { motion as motionSound } from './render/audio';
 import { loadLook, saveLook } from './render/look-store';
 import { renderCustomize } from './ui/customize';
 import { Autopilot } from './sim/autopilot';
@@ -34,13 +38,39 @@ import { exportFeedback, hasRated, keepEvent, playtestMode, ratingCount } from '
 
 await initPhysics();
 
+// `?sandbox=<segment>` tries one mechanic on its own: a short generated course of just that
+// segment (levels/sandbox.ts). The generator only loads in this mode.
+const sandbox = await (async () => {
+  if (!new URLSearchParams(location.search).has('sandbox')) return null;
+  const { parseSandbox, sandboxLevel, sandboxQuery } = await import('./levels/sandbox');
+  try {
+    const o = parseSandbox(location.search)!;
+    const { level, seed } = sandboxLevel(o);
+    return { o: { ...o, seed }, level, query: sandboxQuery };
+  } catch (e) { alert(`Sandbox: ${String(e)}`); return null; }
+})();
 // `?play=draft` playtests the level being edited in the editor instead of the built-in courses.
-const draft: LevelData | null = (() => {
+// Sandbox courses play the same way: nothing is saved or sent.
+const draft: LevelData | null = sandbox?.level ?? (() => {
   if (new URLSearchParams(location.search).get('play') !== 'draft') return null;
   try { return parseLevel(JSON.parse(load(DRAFT_KEY) ?? 'null')); } catch (e) { alert(`Can't playtest: ${String(e)}`); return null; }
 })();
 const playlist: LevelData[] = draft ? [draft] : LEVELS;
 const toEditor = () => { location.href = `${import.meta.env.BASE_URL}editor.html`; };
+/** The sandbox's "menu": a new layout of the same mechanic. */
+const nextSandbox = () => { if (sandbox) location.search = sandbox.query({ ...sandbox.o, seed: sandbox.o.seed + 1 }); };
+if (sandbox) {
+  // Bottom-left: what's on, and links to change it.
+  const { o, query } = sandbox;
+  const tag = document.getElementById('sandbox-tag')!;
+  const link = (label: string, next: Partial<typeof o>) => Object.assign(document.createElement('a'), { textContent: label, href: query({ ...o, ...next }) });
+  const title = document.createElement('b');
+  title.textContent = 'SANDBOX';
+  tag.append(title, `${o.segment} · d ${o.d}`,
+    link('easier', { d: Math.max(0, o.d - 0.25) }), link('harder', { d: Math.min(1, o.d + 0.25) }),
+    link('new layout', { seed: o.seed + 1 }), link(o.star ? 'no star' : 'with star', { star: !o.star }));
+  tag.hidden = false;
+}
 
 // ---------- Setup ----------
 /** Single-player build (GitHub Pages etc.): no server, so no accounts, multiplayer, shop or stats. */
@@ -111,6 +141,14 @@ if (!SOLO) void account.init(load('hamball.name') ?? undefined);
 const autoQuality = new AutoQuality(AutoQuality.initialTier(matchMedia('(pointer: coarse)').matches), (tier) => {
   if (settings.get().quality === 'auto') applyTier(tier);
 });
+let particleShare = 1;
+/** Motion effects: "reduced" turns off shake, FOV kicks and hit-stop, and halves particles. */
+function applyMotionSetting() {
+  const reduced = settings.get().effects === 'reduced';
+  Effects.scale = particleShare * (reduced ? 0.5 : 1);
+  CameraRig.motion = reduced ? 0 : 1;
+}
+
 function applyTier(tier: QualityTier) {
   const t = TIERS[tier];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, t.pixelRatio));
@@ -121,6 +159,9 @@ function applyTier(tier: QualityTier) {
     sun.shadow.map = null;
   }
   TrailView.enabled = t.trails;
+  Motes.enabled = t.motes;
+  particleShare = t.particles;
+  applyMotionSetting();
   analytics.track('quality_tier', { tier, auto: settings.get().quality === 'auto' });
 }
 
@@ -148,6 +189,11 @@ function createSession(data: LevelData): RaceSession {
   session?.dispose();
   session = new RaceSession(scene, data);
   session.ballView.setLook(look);
+  // A launched log breaking up: a woody crack, if it's near enough to hear.
+  session.onLogBreak = (at) => {
+    const p = session?.sim.position();
+    if (p && Math.hypot(at[0] - p[0], at[1] - p[1], at[2] - p[2]) < 35) sfx.crack();
+  };
   applyTheme(stage, session.level.theme);
   cameraOverride = data.camera === 'topdown' ? 'top' : null;
   applyCameraMode();
@@ -187,7 +233,7 @@ function restartRace() {
 
 // ---------- Mode changes ----------
 function showMenu() {
-  if (draft) return toEditor();
+  if (draft) return sandbox ? nextSandbox() : toEditor();
   if (mode === 'playing' || mode === 'paused') {
     const s = current(), props = runProps();
     analytics.track('level_quit', { ...props, time: s.sim.elapsed });
@@ -587,6 +633,7 @@ const form = {
   camera: document.getElementById('set-camera') as HTMLSelectElement,
   sens: document.getElementById('set-sens') as HTMLInputElement,
   quality: document.getElementById('set-quality') as HTMLSelectElement,
+  effects: document.getElementById('set-effects') as HTMLSelectElement,
   help: document.getElementById('set-help') as HTMLInputElement,
   analytics: document.getElementById('set-analytics') as HTMLInputElement,
 };
@@ -601,6 +648,7 @@ function syncSettingsForm() {
   form.camera.value = s.cameraMode;
   form.sens.value = String(s.cameraSensitivity);
   form.quality.value = s.quality;
+  form.effects.value = s.effects;
   form.help.checked = s.showHelp;
   form.analytics.checked = s.analytics === 'yes';
 }
@@ -611,6 +659,7 @@ form.camera.addEventListener('change', () => {
 });
 form.sens.addEventListener('input', () => settings.update({ cameraSensitivity: Number(form.sens.value) }));
 form.quality.addEventListener('change', () => settings.update({ quality: form.quality.value as QualitySetting }));
+form.effects.addEventListener('change', () => settings.update({ effects: form.effects.value as 'full' | 'reduced' }));
 form.help.addEventListener('change', () => settings.update({ showHelp: form.help.checked }));
 
 // ---------- Input ----------
@@ -639,11 +688,93 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) pause
 window.addEventListener('blur', pause);
 
 // ---------- Events ----------
+/** Solo only, full motion: freeze the race for a moment (a star grab, a big landing). Steps are skipped, so times are unaffected. */
+let hitStopUntil = 0;
+function hitStop(ms: number) {
+  if (mode === 'playing' && !demo && settings.get().effects === 'full') hitStopUntil = performance.now() + ms;
+}
+
+/** How the ball, camera and particles answer an event (the menu's demo bot gets the visuals too). */
+function feel(e: SimEvent, s: RaceSession) {
+  const p = s.sim.position(), v = s.sim.velocity(), ball = s.ballView, fx = s.effects;
+  const under: [number, number, number] = [p[0], p[1] - 0.95, p[2]];
+  const player = !demo;
+  switch (e.type) {
+    case 'impact':
+      if (s.sim.grounded) {
+        // A landing: dust, a squash, and for big ones a camera dip and a beat of hit-stop.
+        fx.burst('dust', under, { strength: e.strength / 20 });
+        ball.squash(Math.min(0.45, e.strength / 40));
+        if (player && e.strength > 14) rig.dip(Math.min(0.7, e.strength / 35));
+        if (player && e.strength > 18) hitStop(50);
+      } else ball.squash(Math.min(0.25, e.strength / 60));
+      break;
+    case 'boost':
+      fx.burst('streak', p, { dir: v });
+      if (player) rig.kickFov(8);
+      break;
+    case 'spring':
+      fx.burst('dust', under, { strength: 0.6 });
+      ball.squash(-0.35);
+      if (player) rig.kickFov(4);
+      break;
+    case 'bump': {
+      const b = s.sim.solidPose(e.solidId).position; // sliding bumpers: where it is now
+      const away: [number, number, number] = [p[0] - b[0], 0, p[2] - b[2]];
+      fx.burst('spark', [p[0] - away[0] * 0.3, p[1], p[2] - away[2] * 0.3], { dir: away, strength: 0.8 });
+      ball.squash(0.3);
+      ball.dizzy();
+      break;
+    }
+    case 'ballBump':
+      fx.burst('spark', p, { strength: e.strength / 12 });
+      ball.squash(Math.min(0.3, e.strength / 30));
+      if (e.strength > 10) ball.dizzy();
+      break;
+    case 'crumble': {
+      const c = s.level.solids[e.solidId].position;
+      fx.burst('crumbs', [c[0], c[1], c[2]]);
+      break;
+    }
+    case 'hazard':
+      // Spikes: a bright spray where you touched them (the fall's poof follows).
+      fx.burst('spark', under, { color: '#ffffff', strength: 0.9 });
+      ball.squash(0.35);
+      break;
+    case 'smash':
+      // Torn paper: flakes fluttering down and a few bright scraps flung forward.
+      fx.burst('crumbs', [p[0], p[1] + 0.5, p[2]], { color: '#f7f1e3' });
+      fx.burst('spark', p, { dir: v, color: '#fffaf0', strength: 0.6 });
+      ball.squash(0.15);
+      break;
+    case 'star':
+      fx.burst('sparkle', p);
+      hitStop(70);
+      break;
+    case 'checkpoint': {
+      const cp = s.level.checkpoints[e.index].position;
+      fx.burst('sparkle', [cp[0], cp[1] + 0.5, cp[2]], { color: '#bfe9ff' });
+      break;
+    }
+    case 'fall':
+      // Back at the checkpoint: a poof, and the ball pops in.
+      fx.burst('dust', [p[0], p[1] - 0.95, p[2]], { strength: 0.5, color: '#ffffff' });
+      ball.pop();
+      ball.dizzy();
+      break;
+    case 'finish':
+      fx.burst('confetti', p);
+      ball.cheer();
+      break;
+  }
+}
+
 function handle(events: SimEvent[]) {
   const s = current();
   const audible = !demo;
   for (const e of events) {
     if (audible && mode !== 'mp' && e.type !== 'finish') recorder.event(e, s.sim);
+    feel(e, s);
     switch (e.type) {
       case 'countdown':
         if (!audible) break;
@@ -682,26 +813,29 @@ function handle(events: SimEvent[]) {
         s.ballView.faceYaw(s.sim.spawn.yaw);
         if (!audible) break;
         sfx.fall();
+        sfx.respawn();
         if (e.penalty) hud.showBanner('Oops!', `+${e.penalty}s`, 1000);
         break;
       case 'finish': {
         if (!audible) break;
         if (mode === 'mp') { // the server decides places; results come from the room
           sfx.finish();
+          sfx.confetti();
           hud.showBanner('FINISH!', formatTime(e.time), 2000);
           break;
         }
-        const isBest = recordTime(s.level.name, e.time);
+        const isBest = !sandbox && recordTime(s.level.name, e.time); // sandbox layouts come and go
         const newStars = draft ? [] : recordStars(s.level.name, s.sim.stars);
         hud.setBest(bestTime(s.level.name));
         platform.gameplayStop();
         recorder.event(e, s.sim); // before the snapshot below (the loop records the rest after this switch)
         const run = runProps();
-        analytics.track('level_finish', { ...run, time: e.time, medal: medalFor(e.time, s.level.medals), stars: s.sim.stars.filter(Boolean).length });
+        if (!sandbox) analytics.track('level_finish', { ...run, time: e.time, medal: medalFor(e.time, s.level.medals), stars: s.sim.stars.filter(Boolean).length });
         if (!draft) keepEvent('level_finish', run);
         // Built-in courses: send the run for the server to check (rewards, leaderboard).
         pendingSolo = !draft && account.online ? account.submitSolo(levelId(s.data), s.trace.slice()) : null;
         sfx.finish();
+        sfx.confetti();
         hud.showBanner('FINISH!', formatTime(e.time), 1400);
         resultsTimer = setTimeout(() => showResults(e.time, isBest, newStars.length), 1400);
         break;
@@ -722,7 +856,8 @@ function handle(events: SimEvent[]) {
         break;
       case 'impact':
         if (!audible) break;
-        sfx.thud(e.strength);
+        if (s.sim.grounded) sfx.land(e.strength);
+        else sfx.thud(e.strength);
         rig.addShake(e.strength / 40);
         break;
       case 'boost':
@@ -737,6 +872,12 @@ function handle(events: SimEvent[]) {
         break;
       case 'crumble':
         if (audible) sfx.crumble();
+        break;
+      case 'smash':
+        if (audible) sfx.tear();
+        break;
+      case 'hazard':
+        if (audible) sfx.spike();
         break;
     }
   }
@@ -772,7 +913,8 @@ function frame(now: number) {
   let s = current();
 
   const running = mode !== 'paused';
-  if (running) {
+  if (running && now < hitStopUntil) accumulator = 0; // a beat of hit-stop: the race holds still
+  else if (running) {
     accumulator += dt;
     let steps = 0;
     while (accumulator >= SIM.dt && steps < MAX_STEPS) {
@@ -800,7 +942,7 @@ function frame(now: number) {
   const pos = s.render(accumulator / SIM.dt, frameDt);
   if (mode === 'mp') mp.render(frameDt);
   rig.update(frameDt, mode === 'mp' ? mp.follow(s.follow(pos)) : s.follow(pos));
-  sun.position.set(rig.focus.x + 20, rig.focus.y + 35, rig.focus.z + 12); // keep shadows centered on the ball
+  sun.position.copy(rig.focus).add(SUN_OFFSET); // keep shadows centered on the ball (the sky's sun glow is in this direction)
   sun.target.position.copy(rig.focus);
 
   // Switch stars: the timer in the HUD, ticking through its last three seconds.
@@ -817,6 +959,11 @@ function frame(now: number) {
   hud.setTime(mode === 'mp' ? mp.clock(s.sim.elapsed) : s.sim.elapsed);
   hud.setSpeed(Math.hypot(vel[0], vel[2]));
 
+  // The sound of moving, and particle sizing for this frame's view.
+  const v = s.sim.velocity();
+  const racing = !demo && s.sim.phase === 'playing' && (mode === 'playing' || mode === 'mp');
+  motionSound(Math.hypot(v[0], v[2]), s.sim.grounded, THEMES[s.level.theme].grip < 1, racing);
+  Effects.pixelsPerUnit = renderer.domElement.height / (2 * Math.tan((camera.fov * Math.PI) / 360));
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
@@ -837,6 +984,7 @@ if (draft) startLevel(0);
 else {
   showMenu();
   platform.loadingFinished();
+  prewarmLooks(renderer, camera, scene); // while the menu is up: no stall on a theme's first course
   // Back from Stripe Checkout.
   const purchase = new URLSearchParams(location.search).get('purchase');
   if (purchase) {

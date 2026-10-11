@@ -12,6 +12,8 @@
       [hidden] { display: none !important; } /* never let a 'display: flex' rule un-hide something */
 
       /* HUD */
+      /* Frames the picture like a photo of a miniature: no GPU cost. */
+      #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 45%, transparent 58%, rgba(60, 40, 20, 0.28) 100%); }
       #hud { position: fixed; inset: 0; pointer-events: none; text-shadow: 0 2px 4px rgba(0,0,0,.45); }
       #hud.hidden { display: none; }
       #timer { position: absolute; top: 16px; left: 50%; transform: translateX(-50%); font-size: 40px; font-weight: 800; font-variant-numeric: tabular-nums; }
@@ -75,6 +77,9 @@
       .answers button[aria-pressed=true] { background: var(--accent); }
       #fb-map { width: 100%; aspect-ratio: 560 / 260; border-radius: 10px; background: rgba(10, 20, 40, .35); cursor: crosshair; touch-action: none; }
       #fb-comment { font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px; border: 0; }
+      #sandbox-tag { position: absolute; left: 20px; top: 70px; pointer-events: auto; font-size: 13px; font-weight: 700; padding: 4px 10px; border-radius: 8px; background: rgba(20, 30, 50, .7); color: #fff; display: flex; gap: 10px; align-items: center; }
+      #sandbox-tag b { letter-spacing: .1em; color: #ffd166; }
+      #sandbox-tag a { color: #9bd1ff; }
       #playtest-tag { position: absolute; left: 20px; bottom: 16px; font-size: 12px; font-weight: 900; letter-spacing: .1em; padding: 2px 8px; border-radius: 6px; background: #e63946; color: #fff; }
       .row button { flex: 1; text-align: center; }
       label.setting { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-weight: 600; }
@@ -135,12 +140,14 @@
     </style>
   </head>
   <body>
+    <div id="vignette"></div>
     <div id="hud" class="hidden">
       <div id="level"></div>
       <div id="timer">0.00</div>
       <div id="best"></div>
       <div id="stars" hidden></div>
       <div id="playtest-tag" hidden>PLAYTEST</div>
+      <div id="sandbox-tag" hidden></div>
       <div id="star-timer" hidden></div>
       <div id="banner"></div>
       <div id="speed"></div>
@@ -323,6 +330,9 @@
         <label class="setting">Camera sensitivity <input type="range" id="set-sens" min="0.4" max="2" step="0.1" /></label>
         <label class="setting">Graphics
           <select id="set-quality"><option value="auto">Auto</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low (fastest)</option></select>
+        </label>
+        <label class="setting">Motion effects
+          <select id="set-effects"><option value="full">Full</option><option value="reduced">Reduced (no shake)</option></select>
         </label>
         <label class="setting">Show controls hint <input type="checkbox" id="set-help" /></label>
         <div id="account-settings" style="display: contents">

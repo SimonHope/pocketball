@@ -43,6 +43,9 @@ export const PlayerState = schema({
   t: t.float64().default(0),
   x: t.float32().default(0), y: t.float32().default(0), z: t.float32().default(0),
   vx: t.float32().default(0), vy: t.float32().default(0), vz: t.float32().default(0),
+  // Their iron ball, while they're pushing one along (each player has their own).
+  carrier: t.boolean().default(false),
+  cx: t.float32().default(0), cy: t.float32().default(0), cz: t.float32().default(0),
   progress: t.float32().default(0),    // distance along the level route (for live placing)
   place: t.uint8().default(0),
   finishTime: t.float32().default(-1), // seconds, -1 = not finished
@@ -77,6 +80,15 @@ export interface BallUpdate {
   t: number;   // server-clock ms when sampled
   p: [number, number, number];
   v: [number, number, number];
+  /** Your iron ball's centre, while it's out of its starting place (drawn for the others). */
+  c?: [number, number, number];
+}
+
+/** An update's iron ball, if it's believable: near the ball that's riding it. Only ever drawn. */
+export function carrierOf(u: BallUpdate): [number, number, number] | null {
+  const c = u.c;
+  if (!Array.isArray(c) || c.length !== 3 || !c.every((n) => typeof n === 'number' && Number.isFinite(n))) return null;
+  return Math.hypot(c[0] - u.p[0], c[1] - u.p[1], c[2] - u.p[2]) < 10 ? c : null;
 }
 
 export interface Ping { id: number }

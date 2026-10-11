@@ -49,7 +49,8 @@ export class ServerBot {
     }
     if (now - this.lastUpdate < UPDATE_MS) return null;
     this.lastUpdate = now;
-    return { t: now, p: this.sim.position(), v: this.sim.velocity() };
+    const c = this.sim.carrierOut();
+    return { t: now, p: this.sim.position(), v: this.sim.velocity(), ...(c ? { c } : {}) };
   }
 
   dispose() {

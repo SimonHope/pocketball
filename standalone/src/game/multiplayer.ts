@@ -8,6 +8,7 @@ import { NetClient, type JoinOptions } from '../net/net-client';
 import { eliminationCount } from '../net/modes';
 import { INTERP_DELAY_MS, MSG, PLAYER_COLORS, type Phase, type PlayerState } from '../net/protocol';
 import { BallView } from '../render/ball-view';
+import { ironBallMesh } from '../render/level-view';
 import type { CameraRig, Follow } from '../render/camera';
 import { formatTime, type Hud } from '../render/hud';
 import { load, save } from '../render/storage';
@@ -53,6 +54,8 @@ export interface MpHost {
 
 interface Remote {
   view: BallView;
+  /** Their iron ball, made when they first push one. */
+  iron?: THREE.Mesh;
   rot: THREE.Quaternion;
   name: string;
   color: number;
@@ -60,6 +63,11 @@ interface Remote {
 }
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+
+function dropRemote(r: Remote, scene: THREE.Object3D) {
+  r.view.dispose();
+  if (r.iron) scene.remove(r.iron);
+}
 
 export class Multiplayer {
   net: NetClient | null = null;
@@ -209,7 +217,7 @@ export class Multiplayer {
 
   private cleanup() {
     clearTimeout(this.resultsTimer);
-    for (const r of this.remotes.values()) r.view.dispose();
+    for (const r of this.remotes.values()) dropRemote(r, this.host.scene);
     this.remotes.clear();
     this.net = null;
     this.phase = null;
@@ -278,7 +286,7 @@ export class Multiplayer {
     const key = this.currentKey();
     if (key !== this.levelKey) {
       this.levelKey = key;
-      for (const r of this.remotes.values()) r.view.dispose();
+      for (const r of this.remotes.values()) dropRemote(r, this.host.scene);
       this.remotes.clear();
       return this.host.loadSession(this.levelList()[this.net!.state.level] ?? this.levelList()[0]);
     }
@@ -468,7 +476,7 @@ export class Multiplayer {
       seen.add(id);
       let r = this.remotes.get(id);
       if (!r || r.color !== p.color) {
-        r?.view.dispose();
+        if (r) dropRemote(r, this.host.scene);
         r = { view: new BallView(this.host.scene, PLAYER_COLORS[p.color]), rot: new THREE.Quaternion(), name: '', color: p.color, look: '' };
         this.remotes.set(id, r);
       }
@@ -484,7 +492,7 @@ export class Multiplayer {
     });
     for (const [id, r] of this.remotes) {
       if (!seen.has(id)) {
-        r.view.dispose();
+        dropRemote(r, this.host.scene);
         this.remotes.delete(id);
       }
     }
@@ -530,7 +538,8 @@ export class Multiplayer {
       const s = net.sample(id, t);
       const p = net.state.players.get(id);
       // Finished players roll "through" the goal and vanish, so they don't block it.
-      r.view.setVisible(!!s && !!p?.connected && p.finishTime < 0 && !p.dnf);
+      const shown = !!s && !!p?.connected && p.finishTime < 0 && !p.dnf;
+      r.view.setVisible(shown);
       if (!s) continue;
       // Roll the ball visually from its velocity (spin isn't sent over the network).
       const [vx, , vz] = s.velocity;
@@ -540,6 +549,16 @@ export class Multiplayer {
         r.rot.premultiply(new THREE.Quaternion().setFromAxisAngle(axis, speed * dt));
       }
       r.view.update(s.position, [r.rot.x, r.rot.y, r.rot.z, r.rot.w], s.velocity, dt);
+      const c = net.carrierAt(id, t);
+      if (c && !r.iron) {
+        const solid = this.host.session().level.solids.find((x) => x.role === 'carrier');
+        r.iron = ironBallMesh(solid?.shape.kind === 'sphere' ? solid.shape.radius : 3);
+        this.host.scene.add(r.iron);
+      }
+      if (r.iron) {
+        r.iron.visible = !!c && shown;
+        if (c) r.iron.position.set(...c);
+      }
     }
     this.renderPositions();
   }

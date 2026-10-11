@@ -10,8 +10,9 @@ npm run check      # typecheck + lint + unit/integration tests
 npm run test:e2e   # browser tests on the production build (needs Google Chrome; starts both servers)
 npm run loadtest -- 4 16 0   # rooms × bots per room × level: server CPU and race results
 npm run loadtest -- 4 quick 2  # 4 Quick Play rooms (1 client + 7 server bots), 2 games each
-npm run gen-levels   # generate race courses (edit TARGETS in scripts/generate-levels.ts); prints each course's plan
+npm run gen-levels   # generate race courses (scripts/targets.ts; switch mechanics on/off in ../MECHANICS.md); prints each course's plan
 npm run add-walls    # rebuild safety walls on every race course (after editing a level)
+                     # try one mechanic on its own: npm run dev, then /?sandbox=<segment>&d=0.5&star (see ../MECHANICS.md)
 npm run build:pages  # single-player build for GitHub Pages (no server) → dist-pages/
                      # gen-levels also extends Warm-Up, Zig-Zag, Sweeper Alley from src/levels/bases/
 npm run analytics    # retention, session length, course funnel, top errors (from DATA_DIR)
@@ -210,10 +211,22 @@ Every race course hides **3 stars**, and each one asks you to use the mechanic i
 | First ride (switch) | `mover` | A button on the near pad; the star on the far pad for one platform trip |
 | Shortcut / race (switch) | `fork` | On the risky line, or a switch star at the exit that only the risky line beats |
 | Don't brake (switch) | downhill curves, plunges, cascades | A button at the top, the star at the bottom |
+| Lip | `brakePad` | Just past the pad's far edge: stop right at the brink |
+| Pocket | `pinball` | In a pocket a sliding toadstool slides into: dart in and out |
+| Beat (riding) | `keys` | Over a side key in time with its neighbour |
+| Rim (riding) | `turntable` | Rides the disc near its rim: wait out there for it |
+| Arc | `pendulum` | At the pad's edge, where the bob swings low |
+| Tilt | `rocker` | Just off the edge of the tipping ruler |
+| Pinch | `rollers` | Out in a row of logs, off the straight line |
+| Smash (switch) | `paperWall` | A button on the way in; only tearing straight through the paper beats the timer |
+| Steer | `ironBall` | Over the spike field off the straight line: steer the iron ball there |
+| Climb (switch) | `wheel` | A button on the start pad; only boarding the very next step beats the timer |
+| Peek | `trickGates` | Behind a narrow side door that opens half as often |
+| Dodge | `logSlope` | In the next lane in, just above the second bay |
 | Spur | any | A dead-end plank: only when nothing else on the course offered one |
 
 - **Choosing:** stars go one per third of the course (before the finale). The course's own mechanics (its acts) get the first half of each third, then any segment that can hide one may. A course never repeats a kind (except the spur). `npm run gen-levels` prints each star's kind in the plan, e.g. `springUp(0)★super`.
-- **Riding stars** (`to` + `period`, or `center` + `speed`) move exactly in step with the mover or arm they copy. The star route waits for them at `catch` points.
+- **Riding stars** (`to` + `period`, or `center` + `speed`, or `ride`: the index of any moving piece) move exactly in step with the mover, arm, key or disc they copy. The star route waits for them at `catch` points.
 - **Switch stars** (`button`, `time`) are a faint ghost until you roll over their red button; then the button lights up, the star shows for `time` seconds (a ⏱ timer in the HUD ticks down), and it blinks in its last 2 s. `gen-levels` sets `time` to 1.2× the star-route bot's button-to-star time. Mazes make their farthest star a switch star, with the button at its junction.
 - **Collecting:** roll through one. Stars stay collected after a fall and reset when you restart.
 - **Saving:** stars count once you finish, and add up across runs (saved in the browser, like best times). The HUD, the results screen and the level select (stars on each map) show them.
@@ -223,7 +236,21 @@ Every race course hides **3 stars**, and each one asks you to use the mechanic i
 
 ## Themes and cosmetics
 
-- **Themes:** set `"theme"` on a level: `meadow`, `candy`, `ice` (floors grip 30% as much) or `night`. This is placeholder art until final art arrives.
+- **Themes:** set `"theme"` on a level: `meadow`, `candy`, `ice` (floors grip 30% as much) or `night`.
+- **Art direction, "the hamster's world":** courses are built from things a hamster finds around a house, and each theme is a place. Meadow is done (a garden); Candy (a kitchen counter), Ice (a freezer) and Night (a bedroom) still use the plain placeholder look.
+  - A theme's `look` (`src/levels/themes.ts`) says what each floor palette, rail, wall, bumper and sweeper is made of. In the garden: paving stones, lawn on soil, deck boards, painted toy boards, popsicle-stick rails, hedges, toadstool bumpers, pencil sweepers, crackers for crumbling tiles, and pennant checkpoints.
+  - Textures are painted on canvas once (`src/render/surfaces.ts`) and tiled in world units across the merged meshes. Floor and rail sides darken towards the bottom via vertex colours.
+  - The sky is a world-locked painted panorama (`src/render/backdrop.ts`): gradient, sun glow, the lawn far below, and giant soft garden shapes around the horizon. It costs nothing extra to draw. Specks drift in the light (off on the low graphics setting), and a CSS vignette frames the picture.
+  - The textures and shaders are prepared while the menu is idle (`src/render/prewarm.ts`), so a theme's first course doesn't stall.
+  - Add a theme's look by giving it a `look`, plus any new surface kinds or backdrop shapes it needs.
+- **Game feel** (see `DESIGN.md`):
+  - **Particles:** `src/render/effects.ts`, two fixed pools and two draw calls: dust, streaks, sparks, crumbs, sparkles and confetti.
+  - **Ball and hamster:** squash and stretch, the respawn pop, lean, in-air flailing, dizziness and the finish cheer, all in `src/render/ball-view.ts`.
+  - **Camera:** field-of-view kicks and landing dips in `src/render/camera.ts`.
+  - **Sound:** a continuous rolling and wind sound, plus landing, respawn and confetti sounds, in `src/render/audio.ts`.
+  - **Hit-stop:** solo-only, on star grabs and big landings.
+  - **Where they're triggered:** `feel()` in `src/main.ts` maps each simulation event to its response.
+  - **Settings:** "Motion effects: Reduced" tones it all down.
 - **Cosmetics:** choose them on the Customize screen. Locked items show how to unlock them. Your look syncs in multiplayer: signed-in players get their account's owned look, and players without an account get free items only.
 
 ## Multiplayer
@@ -258,13 +285,22 @@ A level is a JSON file listing its pieces:
 | `pad` | `center` (top-surface middle), `w`, `d`, `palette?` |
 | `path` | `from`, `to` (top-surface centerline, works for ramps), `width`, `rails?`, `palette?` |
 | `block` | `position` (center), `size`, `yaw?` (degrees), `color?` |
-| `bumper` | `position` (base), `radius?`, `height?` |
+| `bumper` | `position` (base), `radius?`, `height?`. With `to` + `period` (+ `phase?`) it slides there and back |
 | `sweeper` | `position` (floor under the pivot), `length`, `speed` (rad/s) |
-| `mover` | `from`, `to` (top-surface centers), `w`, `d`, `period` (s) |
+| `mover` | `from`, `to` (top-surface centers), `w`, `d`, `period` (s), `phase?` (s ahead in its cycle), `hold?` (fraction resting at each end; piano keys) |
+| `turntable` | `center` (top middle), `radius`, `speed` (rad/s), `gaps?` (degrees round from +x where the rim is open) |
+| `pendulum` | `pivot`, `length` (to the bob's centre), `swing` (degrees either side), `period`, `phase?`, `yaw?` (it swings across this direction), `radius?` (the bob) |
+| `rocker` | `center` (top middle), `w`, `d`, `tilt` (degrees either side), `period`, `phase?`: tilts about its longer middle line |
+| `roller` | `from`, `to` (floor points), `period`, `phase?`, `radius?`, `length?`, `launcher?`, `wait?`: a log rolling from `from` to `to`, then starting again. With `launcher`, it comes out of a hopper whose lamp counts down to each launch, and breaks into splinters at `to`; `wait` is the seconds of each period it waits in the hopper first |
+| `paper` | `position` (floor under its middle), `w`, `h?`, `yaw?`, `speed?` (default 15): a ball this fast tears through it (for that player, until they respawn) |
+| `ironball` | `position` (the floor point it rests on), `radius?` (3), `roll?`, `yaw?`: a giant iron ball you ride. Real physics, one per player, held still until you land on it and put back on a respawn. With `roll` (a speed), it rolls on along `yaw` by itself while you ride it: your sideways push steers it, pushing along its way moves you over its top, and a gentle pull keeps you near the top (`SIM.carrier`). Without it, your push rolls it |
+| `spikes` | `center` (top middle), `w`, `d`: touching it sends you back to your last checkpoint |
+| `wheel` | `center` (the hub), `radius` (to the top of each step), `speed` (rad/s), `steps?` (6), `w?`, `d?` (step size), `yaw?`: a Ferris wheel of level steps |
+| `gate` | `position` (floor under its middle), `w`, `h?`, `yaw?`, `period`, `phase?`, `open?` (fraction of the period it's open, default 0.5): a door that sinks into the floor to open |
 | `checkpoint` | `position`, `yaw?` |
 | `goal` | `position`, `radius?` (exactly one per race course) |
 | `zone` | `position`, `radius?` (arenas only: King of the Hill zones) |
-| `star` | `position` (the star's centre, about 1.4 above the floor): a collectible; race courses only. Optional: `to` + `period` (slides there and back like a mover), `center` + `speed` (circles like a sweeper arm's tip), `button` (floor point of a switch) + `time` (seconds it shows, default 6) |
+| `star` | `position` (the star's centre, about 1.4 above the floor): a collectible; race courses only. Optional: `to` + `period` (slides there and back like a mover), `center` + `speed` (circles like a sweeper arm's tip), `ride` (the index of a moving piece it rides with, placed relative to that piece at rest), `button` (floor point of a switch) + `time` (seconds it shows, default 6) |
 | `boost` | `position` (floor), `yaw?`, `w?`, `d?`, `speed?` (default 30): shoots you along `yaw` |
 | `spring` | `position` (floor), `radius?`, `power?` (up speed, default 16), `yaw?`, `push?` (forward speed; unset keeps yours) |
 | `conveyor` | `from`, `to` (belt runs this way), `width`, `speed?` (default 12), `rails?`: your top speed counts relative to the belt |
@@ -280,7 +316,11 @@ Levels also have:
 - Lifts are `mover` pieces whose `from` and `to` differ in height. Bots ride them with `wait` waypoints at the bottom and the top.
 - `camera`: `topdown` starts the course in the top-down camera (mazes use it). Players can still switch with C.
 
-The route's waypoints can also set `lane` (the widest lane bots may take there; 0 means tight, racing line only) and `catch` (hold there until a star is collected: for riding stars).
+The route's waypoints can also set:
+- `lane`: the widest lane bots may take there; 0 means tight, racing line only.
+- `catch`: hold there until a star is collected (for riding stars).
+- `ride`: stay on the moving platform you're on until it brings you to this point (a wheel's step).
+- `timed`: hold there until the way on is clear. The bot looks ahead along the route (`src/sim/predict.ts`) until the next timed point or a spot out of reach of every moving piece. It goes when no moving piece will be in its way and there will be floor under it all along. Every moving piece is a function of the sim clock, so this is exact maths, not guessing. Use it before keys, turntables, pendulums, rollers and sliding bumpers.
 
 `pad`, `path`, `crumble` and `conveyor` pieces can set `open: true`: no safety walls on them (risky lines that are meant to be fallen off).
 
@@ -292,7 +332,7 @@ To add a level, create `src/levels/<name>.json`, register it in `src/levels/inde
 
 **Safety walls:** `npm run add-walls` puts a low wall (colour `#eef1f6`) on every floor edge you could roll off. It leaves gaps where the route leaves the floor (jumps, drops, gaps to platforms, lifts and updrafts), and skips edges that already have a rail, a wall, or more floor beside them. Re-running rebuilds the walls. Arenas are left open.
 
-**Conventions:** the course runs toward −z and the ball radius is 1. Every solid is a box or a cylinder, so each one maps directly onto a Roblox Part for the later port.
+**Conventions:** the course runs toward −z and the ball radius is 1. Every solid is a box or a cylinder (the iron ball is the one sphere), so each one maps directly onto a Roblox Part for the later port.
 
 ## Tests
 
@@ -306,6 +346,8 @@ To add a level, create `src/levels/<name>.json`, register it in `src/levels/inde
 - `server-quick.test.ts`: Quick Play fills with bots and rolls into the next game; matchmaking puts two players in the same room; Elimination runs to a single winner; King of the Hill scores and ranks by score; Bumper Arena knocks players out.
 - `modes.test.ts`, `cosmetics.test.ts`: mode rules and catalog checks.
 - `course.test.ts` also runs bots in the outer lanes on every course, and an 8-bot crowd race.
+- `moving-pieces.test.ts`: the iron ball waits until you land on it, rolls the way you push and goes back on a respawn; spikes send you back; wheel steps carry you up and stay level; gates block while up; logs sit on slopes; iron balls are only drawn for others near their rider; every motion reports the velocity it really moves at; turntables carry a resting ball and keep it in except at gaps; piano keys drop a waiting ball; pendulums and rollers knock the ball; rockers tip it to the low side; sliding bumpers kick from where they are now; paper stops a slow ball, tears for a fast one and mends on respawn; stars ride any moving piece; bots wait for a gap in a swinging pendulum whenever they arrive. `course.test.ts` runs each new segment (brake pad, pinball, keys, turntable, pendulum, rocker, rollers, paper walls, iron ball, spin wheel, trick gates, log slope) at difficulty 0 and 1 with careful, side-lane and slower bots setting off at different moments, and the server accepts every run.
+- `e2e/smoke.spec.ts` also plays the mechanic sandbox (`?sandbox=turntable`).
 - `e2e/multiplayer.spec.ts`: two browsers: create, join by invite link, ready, race, agree on live positions, leave; wrong room code shows a clear error; Quick Play lobby counts down and bots fill the race.
 - Stars and pacing: stars are collected once, kept after a fall, reset on restart; riding stars stay in step with their mover or arm; switch stars show only while their timer runs, which survives a fall (`mechanics.test.ts`); every star-hiding segment hides its own kind of star, which the star route collects and the safe line doesn't (`course.test.ts`); stars use the course's mechanics first and never repeat a kind (`levels.test.ts`); every course has 3 stars and a star route that a bot finishes with all 3 and no falls (`course.test.ts`); star-route runs pass the server checks (`rules.test.ts`); courses run intro → build-up → twist → finale and get harder, forks have an open risky line (`levels.test.ts`); every combo segment builds and can be finished (`course.test.ts`).
 - `feedback.test.ts`: the run recorder (falls, sections, splits, restarts), layout versions, and the per-course feedback numbers; `meta.test.ts` checks the report includes them, and `e2e/smoke.spec.ts` rates a course in playtest mode, exports it, and answers the quit form.

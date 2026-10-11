@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { THEMES, type ThemeName } from '../levels/themes';
 import type { ResolvedLevel } from '../sim/geometry';
+import { skyTexture as paintedSky } from './backdrop';
+import { BallView } from './ball-view';
 
 export interface Stage {
   renderer: THREE.WebGLRenderer;
@@ -64,9 +66,14 @@ export function createStage(fov: number): Stage {
 /** Sky, fog and lighting for a world theme. */
 export function applyTheme({ scene, sun, ambient }: Stage, name: ThemeName) {
   const t = THEMES[name];
-  (scene.background as THREE.Texture | null)?.dispose();
-  scene.background = skyTexture(t.sky);
-  (scene.fog as THREE.Fog).color.set(t.fog);
+  const old = scene.background as THREE.Texture | null;
+  if (old && !old.userData.keep) old.dispose();
+  // A theme with a look: a world-locked painted sky that the fog fades into.
+  scene.background = t.look ? paintedSky(t.look) : skyTexture(t.sky);
+  BallView.environment = t.look ? scene.background : null; // the glass reflects the painted world
+  const fog = scene.fog as THREE.Fog;
+  fog.color.set(t.look ? t.look.sky.horizon : t.fog);
+  [fog.near, fog.far] = t.look ? [90, 320] : [70, 200]; // the painted panorama does the far distance
   sun.color.set(t.sun.color);
   sun.intensity = t.sun.intensity;
   ambient.color.set(t.ambient.sky);

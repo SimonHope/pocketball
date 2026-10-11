@@ -7,6 +7,29 @@ import { buildHat, skinTexture, TrailView } from './cosmetics-view';
 
 // The clear ball plus the hamster running inside it. The hamster stays upright,
 // turns toward the direction of travel, and scurries faster the quicker the ball rolls.
+// It also reacts: the ball squashes on landings and hits and pops in after a respawn; the
+// hamster leans into acceleration and turns, flails in the air, wobbles when dizzy, and
+// hops at the finish.
+
+/** A damped spring towards 0, for squash and stretch (settles in about a quarter second). */
+export class Spring {
+  value = 0;
+  private velocity = 0;
+  constructor(private stiffness = 320, private damping = 16) {}
+  kick(amount: number) { this.velocity += amount; }
+  set(value: number) { this.value = value; this.velocity = 0; }
+  step(dt: number) {
+    // Small fixed sub-steps keep it stable at any frame rate.
+    for (let left = Math.min(dt, 0.1); left > 0; left -= 1 / 240) {
+      const h = Math.min(left, 1 / 240);
+      this.velocity += (-this.stiffness * this.value - this.damping * this.velocity) * h;
+      this.value += this.velocity * h;
+    }
+  }
+}
+
+/** What the ball is doing this frame (solo has it; other players' balls don't). */
+export interface BallState { grounded: boolean }
 
 interface Foot {
   mesh: THREE.Mesh;
@@ -52,7 +75,18 @@ function buildHamster(): { hamster: THREE.Group; feet: Foot[]; fur: THREE.MeshSt
 }
 
 export class BallView {
+  /** What the glass reflects: the theme's painted sky (scene.ts sets it; null = none). */
+  static environment: THREE.Texture | null = null;
+  /** Unrotated: carries the squash and the respawn pop. The shell inside it rolls. */
+  private body = new THREE.Group();
   private shell = new THREE.Group();
+  /** + flattens, - stretches upwards. */
+  private squashSpring = new Spring();
+  private popSpring = new Spring(260, 14);
+  private lean = new THREE.Vector2(); // forward, sideways (radians)
+  private lastVelocity: Vec3 | null = null;
+  private dizzyLeft = 0;
+  private cheerLeft = 0;
   private hamster: THREE.Group;
   private feet: Foot[];
   private hamsterYaw = Math.PI; // hamster's local +z is its face; courses run toward -z
@@ -70,7 +104,7 @@ export class BallView {
   /** `tint` colors the ball (multiplayer player color); the default is the classic clear blue. */
   constructor(private parent: THREE.Object3D, tint?: string) {
     const r = SIM.ball.radius;
-    this.glassMat = new THREE.MeshPhysicalMaterial({ transparent: true, roughness: 0.05, clearcoat: 1, depthWrite: false });
+    this.glassMat = new THREE.MeshPhysicalMaterial({ transparent: true, roughness: 0.05, clearcoat: 1, depthWrite: false, envMapIntensity: 0.9 });
     const glass = new THREE.Mesh(new THREE.SphereGeometry(r, 32, 24), this.glassMat);
     glass.renderOrder = 2;
     this.shell.add(glass);
@@ -82,7 +116,8 @@ export class BallView {
       .applyMatrix4(new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(...rot))));
     this.shell.add(new THREE.Mesh(mergeGeometries(rings), ringMat)); // one draw call for all three
     rings.forEach((g) => g.dispose());
-    parent.add(this.shell);
+    this.body.add(this.shell);
+    parent.add(this.body);
 
     // Skin pattern: a slightly larger transparent sphere that rolls with the ball.
     this.skinOverlay = new THREE.Mesh(
@@ -162,7 +197,7 @@ export class BallView {
   }
 
   setVisible(visible: boolean) {
-    this.shell.visible = this.hamster.visible = visible;
+    this.body.visible = this.hamster.visible = visible;
     this.visible = visible;
     if (this.label) this.label.visible = visible;
   }
@@ -170,7 +205,7 @@ export class BallView {
   dispose() {
     this.trail?.dispose();
     this.skinOverlay.material.map = null; // skin textures are shared between balls
-    for (const root of [this.shell, this.hamster, this.label]) {
+    for (const root of [this.body, this.hamster, this.label]) {
       if (!root) continue;
       this.parent.remove(root);
       root.traverse((o) => {
@@ -191,11 +226,59 @@ export class BallView {
 
   private visible = true;
 
-  update(position: Vec3, rotation: Quat, velocity: Vec3, dt: number) {
+  /** Landing, a spring or a hit: + squashes flat, - stretches tall (about 0.1–0.5). */
+  squash(amount: number) {
+    this.squashSpring.kick(amount * 18);
+  }
+
+  /** After a respawn: pop in from smaller. */
+  pop() {
+    this.popSpring.set(-0.4);
+  }
+
+  /** Knocked about: wobble for a second. */
+  dizzy() {
+    this.dizzyLeft = 1;
+  }
+
+  /** Over the line: hop and spin. */
+  cheer() {
+    this.cheerLeft = 1.5;
+  }
+
+  private react(velocity: Vec3, dt: number, state: BallState) {
+    this.squashSpring.step(dt);
+    this.popSpring.step(dt);
+    const s = Math.max(-0.35, Math.min(0.35, this.squashSpring.value));
+    const pop = 1 + this.popSpring.value;
+    this.body.scale.set(pop * (1 + s * 0.5), pop * (1 - s), pop * (1 + s * 0.5));
+    this.hamster.scale.set(1 + s * 0.25, 1 - s * 0.5, 1 + s * 0.25).multiplyScalar(pop);
+
+    // Lean into acceleration (forward/back) and turns (sideways), relative to where it faces.
+    if (dt > 0 && this.lastVelocity) {
+      const ax = (velocity[0] - this.lastVelocity[0]) / dt, az = (velocity[2] - this.lastVelocity[2]) / dt;
+      const fx = Math.sin(this.hamsterYaw), fz = Math.cos(this.hamsterYaw);
+      const forward = state.grounded ? (ax * fx + az * fz) * 0.012 : 0;
+      const side = state.grounded ? (ax * fz - az * fx) * 0.012 : 0;
+      const k = 1 - Math.exp(-10 * dt);
+      this.lean.x += (Math.max(-0.32, Math.min(0.32, forward)) - this.lean.x) * k;
+      this.lean.y += (Math.max(-0.32, Math.min(0.32, side)) - this.lean.y) * k;
+    }
+    this.lastVelocity = [velocity[0], velocity[1], velocity[2]];
+    this.dizzyLeft = Math.max(0, this.dizzyLeft - dt);
+    this.cheerLeft = Math.max(0, this.cheerLeft - dt);
+  }
+
+  update(position: Vec3, rotation: Quat, velocity: Vec3, dt: number, state: BallState = { grounded: true }) {
+    if (this.glassMat.envMap !== BallView.environment) {
+      this.glassMat.envMap = BallView.environment;
+      this.glassMat.needsUpdate = true;
+    }
     this.trail?.update(position, this.visible ? Math.hypot(velocity[0], velocity[2]) : 0, dt);
     this.label?.position.set(position[0], position[1] + 2.1, position[2]);
-    this.shell.position.set(...position);
+    this.body.position.set(...position);
     this.shell.quaternion.set(...rotation);
+    this.react(velocity, dt, state);
 
     const speed = Math.hypot(velocity[0], velocity[2]);
     if (speed > 0.5) {
@@ -204,14 +287,19 @@ export class BallView {
       this.hamsterYaw += diff * Math.min(1, dt * 8);
     }
 
-    this.stride += dt * Math.min(speed, 20) * 1.6;
-    const running = speed > 0.3;
-    const bob = running ? Math.abs(Math.sin(this.stride)) * 0.04 : 0;
+    // In the air the feet flail (fast and wide); otherwise they scurry with the roll.
+    const air = !state.grounded;
+    this.stride += dt * (air ? 22 : Math.min(speed, 20) * 1.6);
+    const running = air || speed > 0.3;
+    const cheer = this.cheerLeft > 0 ? Math.abs(Math.sin((1.5 - this.cheerLeft) * Math.PI * 2)) * 0.22 : 0;
+    const bob = (running && !air ? Math.abs(Math.sin(this.stride)) * 0.04 : 0) + cheer;
     this.hamster.position.set(position[0], position[1] - SIM.ball.radius + 0.06 + bob, position[2]);
-    this.hamster.rotation.set(0, this.hamsterYaw, 0);
+    const wobble = this.dizzyLeft > 0 ? Math.sin(this.dizzyLeft * 26) * 0.35 * this.dizzyLeft : 0;
+    const spin = this.cheerLeft > 0 ? (1 - this.cheerLeft / 1.5) * Math.PI * 2 : 0;
+    this.hamster.rotation.set(this.lean.x, this.hamsterYaw + spin, -this.lean.y + wobble, 'YXZ');
     this.feet.forEach((f, i) => {
       const phase = this.stride + (i % 2 === 0 ? 0 : Math.PI) + (i < 2 ? 0 : Math.PI / 2);
-      f.mesh.position.z = f.baseZ + (running ? Math.sin(phase) * 0.1 : 0);
+      f.mesh.position.z = f.baseZ + (running ? Math.sin(phase) * (air ? 0.16 : 0.1) : 0);
     });
   }
 }

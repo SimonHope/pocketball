@@ -33,6 +33,11 @@ export class CameraRig {
   private speed = 0;       // smoothed horizontal speed
   private lift = 0;        // smoothed extra height from vertical motion
   private shake = 0;
+  /** A short FOV punch (boosts, springs) and a dip on hard landings; both ease back. */
+  private fovKick = 0;
+  private dipBy = 0;
+  /** 1 = full motion effects, 0 = none (the "reduced motion" setting). */
+  static motion = 1;
   private pos = new THREE.Vector3();
 
   constructor(private camera: THREE.PerspectiveCamera) {}
@@ -52,8 +57,18 @@ export class CameraRig {
     this.manualTimer = VIEW.camera.manualHold;
   }
 
+  /** Widen the view for a moment (degrees). */
+  kickFov(degrees: number) {
+    this.fovKick = Math.max(this.fovKick, degrees * CameraRig.motion);
+  }
+
+  /** Sink the camera a little (a hard landing). */
+  dip(amount: number) {
+    this.dipBy = Math.max(this.dipBy, amount * CameraRig.motion);
+  }
+
   addShake(amount: number) {
-    this.shake = Math.min(1, this.shake + amount);
+    this.shake = Math.min(1, this.shake + amount * CameraRig.motion);
   }
 
   snap(follow: Follow, yaw: number) {
@@ -94,13 +109,16 @@ export class CameraRig {
     this.pos.lerp(desired, k);
     this.focus.lerp(focus, k);
 
-    const fov = s.fov + Math.min(s.maxFov - s.fov, this.speed * s.speedFov);
+    this.fovKick *= Math.exp(-5 * dt);
+    this.dipBy *= Math.exp(-7 * dt);
+    const fov = s.fov + Math.min(s.maxFov - s.fov, this.speed * s.speedFov) + this.fovKick;
     if (Math.abs(this.camera.fov - fov) > 0.01) {
-      this.camera.fov += (fov - this.camera.fov) * approach(4, dt);
+      this.camera.fov += (fov - this.camera.fov) * approach(this.fovKick > 0.5 ? 12 : 4, dt);
       this.camera.updateProjectionMatrix();
     }
 
     this.camera.position.copy(this.pos);
+    this.camera.position.y -= this.dipBy;
     if (this.shake > 0.001) {
       const a = this.shake * this.shake * VIEW.camera.shakeAmount;
       this.camera.position.x += (Math.random() * 2 - 1) * a;

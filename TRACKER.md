@@ -3,7 +3,7 @@
 **Goal:** a commercial Hamsterball-style racer. Web launch first (own site + portals such as CrazyGames/Poki), then a Roblox port. Online rooms of 2–16 players you create and join with a code. Small team (2–4 people).
 
 **Full roadmap:** `~/.claude/plans/if-i-need-to-dazzling-oasis.md`
-**Last updated:** 2026-10-10
+**Last updated:** 2026-10-11
 
 ## Status at a glance
 
@@ -126,6 +126,26 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
   - **Stars:** 3 per race course (28 courses, mazes included), off the safe line. They show in the HUD, on the results screen and on the level-select maps, and are saved per course in the browser (not in multiplayer). Gold times account for the faster risky lines.
   - **Star route:** each level has a `starRoute` for bots and tests. Tests check that a bot collects all 3 stars with no falls on every course, and that the server's anti-cheat accepts star-route runs. The editor's bot check runs it too.
   - All 24 generated race courses were regenerated; Warm-Up, Zig-Zag and Sweeper Alley keep their hand-made openings.
+- [x] **Mechanics catalog** (2026-10-10). `MECHANICS.md` lists every piece, segment and star kind, with what it asks of the player, what difficulty changes, where it's used, a "design space" map of player verbs to spot overlaps and gaps, and a checklist for adding new ones.
+  - Its **On** column is live: the generator never places a switched-off segment or star kind.
+  - A test keeps the file and the code in step. Course targets moved to `scripts/targets.ts`.
+- [x] **New mechanics, batch 2** (2026-10-11): the iron ball (ride a giant sphere across spikes: it rolls on by itself and you steer and keep your balance, the first real-physics piece, synced to other players), a Ferris-wheel spin wheel up to a high ledge, trick gates (one open door at a time, all switching together) and a log slope (climb against logs rolling down, waiting in side bays). Each has its own star. Bots balance on the iron ball and ride wheel steps (`ride` waypoints). Not in any course yet.
+- [x] **New mechanics, batch 1** (2026-10-11). Eight new segments, each with its own star challenge, built after looking at how Fall Guys, Astro Bot, Mario 3D World and marble games design stages:
+  - brake pad (stop exactly), pinball (sliding toadstools), piano keys (floors sinking in a wave), turntable (a lazy Susan with gaps in its rim), pendulum (conkers swinging across a bridge), rocker (a tipping ruler), rollers (rows of logs), paper walls (tear through at speed, or weave).
+  - New clock-driven motions (held slides with a phase, spin about a centre, swing, one-way travel), riding on turning and tilting floors, sliding bumpers, a per-player breakable paper wall, and stars that ride any moving piece (`ride`).
+  - Bots look ahead at `timed` waypoints (`src/sim/predict.ts`): moving pieces are pure functions of the clock, so a bot can check the way is clear before it goes.
+  - **Mechanic sandbox:** `/?sandbox=<segment>&d=0.5&star` plays a short course of one mechanic, with links to change difficulty, layout and star. Nothing is saved.
+  - Not in any course yet: existing courses are byte-identical. Next, play them in the sandbox and choose which courses get which.
+- [x] **Game feel** (2026-10-10). Every action answers back:
+  - **Particles:** dust on landings and springs, boost streaks, sparks off bumpers and other balls, crumbs, sparkles for stars and checkpoints, and confetti at the finish. They come from two pooled draw calls.
+  - **Ball and hamster:** the ball squashes and stretches and pops in after a respawn; the hamster leans, flails in the air, gets dizzy and cheers.
+  - **Camera:** field-of-view kicks and landing dips.
+  - **Sound:** a rolling rumble and wind that follow your speed, plus landing and respawn sounds.
+  - **Hit-stop:** solo only, on star grabs and big landings.
+  - **Setting:** "Motion effects: Reduced" for comfort.
+
+  Frame times are within noise of before.
+- [x] **Art direction, first pass: Meadow as a garden** (2026-10-10). The "hamster's world": courses built from garden things (paving, lawn, deck boards, popsicle-stick rails, hedges, toadstool bumpers, pencil sweepers, cracker tiles, pennant flags) under a painted panorama with giant soft plants, a gnome and a watering can around the horizon. Procedural textures and no post-processing: frame times are within noise of the old look, and textures and shaders are prepared while the menu is idle. Candy, Ice and Night next.
 - [x] **Course feedback for playtests** (2026-10-10). `?playtest` asks after every finish (fun, difficulty, length, stars, variety, the most frustrating spot on the map, a comment) and why on every quit; normal players get an optional Rate button. Every run also records where the ball fell, checkpoint times, restarts and stars. Kept in the browser and exportable (works offline), and sent with stats consent. `npm run analytics` reports it per course (also from exported files), and `/feedback.html` shows each course's map with falls and marked spots.
 - [x] **Star challenges tied to each mechanic** (2026-10-10). Every star now asks you to use the segment it's on harder or differently: a super spring, a jump's edge line, a swerve in low gravity, a crumbling side tile, a downwind ledge, a tightrope, a fast belt lane, and more (17 kinds; see README "Stars").
   - **Riding stars** move with a sweeper's tip or their own lift beside the tower; **switch stars** appear for a few seconds after you roll over a red button (a ⏱ timer in the HUD), e.g. at a fork's exit where only the shortcut beats the clock.
@@ -237,6 +257,7 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 - **Exit test:** 16-player races at 150 ms lag feel fair; one server handles 50+ rooms
 
 ### M3: Content and modes (remaining)
+- [ ] **Play the new mechanics in the sandbox** (brake pad, pinball, keys, turntable, pendulum, rocker, rollers, paper walls, iron ball, spin wheel, trick gates, log slope), then add them to courses in `scripts/targets.ts`, ideally so each course has a signature mechanic of its own, and regenerate.
 - [ ] **Playtest the pacing and stars:** do intros feel too easy, finales too hard? Are forks tempting, and stars worth the detour? Tune the act shares and difficulty ranges in `planSlots` (`src/levels/generator.ts`) and the per-segment `mix(...)` values.
 - [ ] **Playtest the star challenges:** the switch-star timers (1.2× the bot's time) and the riding-star catches are tuned for bots; check they feel fair but not free for players. Treadmills, `sweeperBelt` and `slalom` still offer no star; 8 courses still use one spur.
 - [ ] **Stars beyond the browser:** count them on the server (the solo replay already has the path), pay XP for them, add "collect N stars" daily challenges, and decide on stars in multiplayer.
@@ -310,6 +331,9 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 ## Decisions log
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-11 | The iron ball is a real sphere with real physics, one per player, its position sent to the others | Balancing is the mechanic, so it can't be clock-driven; Roblox has Ball parts; others need to see what you're riding |
+| 2026-10-11 | Moving pieces are pure functions of the sim clock; bots time them by looking ahead (`timed` waypoints) | The same for every player and in the server's replays, and bots can predict them exactly instead of reacting |
+| 2026-10-11 | New mechanics are tried in a sandbox before they go into courses | Prototype alone first (as Astro Bot does), and don't churn course layouts and medal times for ideas that may not survive |
 | 2026-10-10 | Each star challenge uses its segment's own mechanic; riding and switch stars added | Generic spur stars were the same on every course; the bot must still collect every star, and the safe line none |
 | 2026-09-24 | Web first, Roblox later | Prove the game and build an audience cheaply; Roblox is the likely bigger earner |
 | 2026-09-24 | Online rooms of 2–16 players, joined by code | The core social hook; Quick Play bots avoid empty lobbies |

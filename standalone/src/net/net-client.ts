@@ -10,7 +10,7 @@ import { MSG, QUICK_ROOM, ROOM_NAME, SEND_HZ, type BallUpdate, type Phase, type 
 // - sends our ball SEND_HZ times a second
 // - buffers other players' updates and interpolates them for smooth drawing and bumping
 
-interface Snapshot { t: number; p: Vec3; v: Vec3 }
+interface Snapshot { t: number; p: Vec3; v: Vec3; c?: Vec3 }
 
 /** Sent when joining. Signed-in players send their account token (name and look then come from the account). */
 export interface JoinOptions {
@@ -126,7 +126,8 @@ export class NetClient {
     const now = this.serverNow();
     if (now - this.lastSend < 1000 / SEND_HZ) return;
     this.lastSend = now;
-    const update: BallUpdate = { t: now, p: sim.position(), v: sim.velocity() };
+    const c = sim.carrierOut();
+    const update: BallUpdate = { t: now, p: sim.position(), v: sim.velocity(), ...(c ? { c } : {}) };
     this.room.send(MSG.state, update);
   }
 
@@ -158,10 +159,23 @@ export class NetClient {
         if (p.t < last.t - 500) buf.length = 0; // a new race started: forget the old one
         else return;
       }
-      buf.push({ t: p.t, p: [p.x, p.y, p.z], v: [p.vx, p.vy, p.vz] });
+      buf.push({ t: p.t, p: [p.x, p.y, p.z], v: [p.vx, p.vy, p.vz], ...(p.carrier ? { c: [p.cx, p.cy, p.cz] as Vec3 } : {}) });
       while (buf.length > 2 && buf[1].t < p.t - BUFFER_MS) buf.shift();
     });
     for (const id of this.buffers.keys()) if (!players.has(id)) this.buffers.delete(id);
+  }
+
+  /** Where another player's iron ball was at server time `t`, if they're pushing one. */
+  carrierAt(id: string, t: number): Vec3 | null {
+    const buf = this.buffers.get(id);
+    if (!buf?.length) return null;
+    let i = buf.length - 1;
+    while (i > 0 && buf[i - 1].t >= t) i--;
+    const b = buf[i], a = buf[i - 1];
+    if (!b.c) return null;
+    if (!a?.c || t >= b.t || t <= a.t) return b.c;
+    const f = (t - a.t) / (b.t - a.t || 1);
+    return [a.c[0] + (b.c[0] - a.c[0]) * f, a.c[1] + (b.c[1] - a.c[1]) * f, a.c[2] + (b.c[2] - a.c[2]) * f];
   }
 
   /** Where another player's ball was at server time `t` (interpolated, briefly extrapolated). */

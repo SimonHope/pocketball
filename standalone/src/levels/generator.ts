@@ -32,7 +32,10 @@ export type Segment =
   // Risk/reward: a railed detour beside a faster narrow line. A dead-end spur with a star.
   | 'fork' | 'starSpur'
   // Combos: two mechanics at once.
-  | 'sweeperBelt' | 'windCrumble' | 'boostSpring' | 'liftWind' | 'bumperTreadmill' | 'crumbleJump';
+  | 'sweeperBelt' | 'windCrumble' | 'boostSpring' | 'liftWind' | 'bumperTreadmill' | 'crumbleJump'
+  // Moving floors and obstacles on the clock (see MECHANICS.md).
+  | 'brakePad' | 'pinball' | 'keys' | 'turntable' | 'pendulum' | 'rocker' | 'rollers' | 'paperWall'
+  | 'ironBall' | 'wheel' | 'trickGates' | 'logSlope';
 
 /** How a course is paced (see the top of this file). */
 export interface Acts {
@@ -62,6 +65,10 @@ export interface GenOptions {
   acts?: Acts;
   /** How many stars to hide (default 0). */
   stars?: number;
+  /** Without acts: every segment at this difficulty (0..1, default 1). The mechanic sandbox uses it. */
+  difficulty?: number;
+  /** Mechanics switched off (MECHANICS.md's "On" column): never placed, even if a course asks for them. */
+  off?: { segments?: Segment[]; stars?: StarKind[] };
   /** Called for each segment placed, in order, with the kind of star it hid if any (for tools and tests). */
   onSegment?: (segment: Segment, act: Act, difficulty: number, star?: StarKind) => void;
 }
@@ -86,6 +93,7 @@ const HEADROOM = 7.5;
 const RAIL_COLOR = '#f4f4f4'; // matches path rails (sim/geometry.ts)
 const PALETTE_CYCLE = ['blue', 'green', 'orange', 'purple'] as const;
 const r2 = (n: number) => Math.round(n * 2) / 2;
+const q4 = (n: number) => Math.round(n * 4) / 4;
 /** `a` at difficulty 0, `b` at difficulty 1. */
 const mix = (a: number, b: number, d: number) => a + (b - a) * d;
 /** Height of a star's centre above the floor it sits on. */
@@ -114,7 +122,27 @@ export type StarKind =
   | 'shortcut'  // fork: on the risky line
   | 'race'      // fork: switch star at the exit only the risky line beats
   | 'noBrake'   // downhill: switch star at the bottom, don't brake
+  | 'lip'       // brakePad: just past the pad's far edge; stop at the brink
+  | 'pocket'    // pinball: in a pocket a sliding toadstool slides into
+  | 'beat'      // keys: over a side key in time with its neighbour
+  | 'rim'       // turntable: rides the disc near its rim
+  | 'arc'       // pendulum: at the edge of the swing, where the bob comes low
+  | 'tilt'      // rocker: just off the edge that dips
+  | 'pinch'     // rollers: out in a row, between the logs
+  | 'smash'     // paperWall: switch star; only tearing straight through beats it
+  | 'steer'     // ironBall: over the spike field, off the straight line
+  | 'climb'     // wheel: switch star; only the very next step beats it
+  | 'peek'      // trickGates: behind a narrow door that opens half as often
+  | 'dodge'     // logSlope: out in a lane between two bays
   | 'spur';     // a dead-end spur (fallback)
+
+/** Every star kind, at run time (MECHANICS.md lists each one; the record makes sure none is missed here). */
+const STAR_KIND_SET: Record<StarKind, true> = {
+  super: true, edge: true, moon: true, column: true, fall: true, detour: true, downwind: true, tightrope: true, fastLane: true,
+  crest: true, lane: true, corner: true, gap: true, tip: true, elevator: true, firstRide: true, shortcut: true, race: true,
+  noBrake: true, lip: true, pocket: true, beat: true, rim: true, arc: true, tilt: true, pinch: true, smash: true, steer: true, climb: true, peek: true, dodge: true, spur: true,
+};
+export const STAR_KINDS = Object.keys(STAR_KIND_SET) as StarKind[];
 
 class CourseBuilder {
   pieces: Piece[] = [];
@@ -127,6 +155,8 @@ class CourseBuilder {
   starCount = 0;
   /** Kinds of star already on the course, in order (one of each). */
   starKinds: StarKind[] = [];
+  /** Kinds switched off in MECHANICS.md. */
+  offKinds = new Set<StarKind>();
   cur: Vec3 = [0, 0, -6];   // floor point at the open edge where the next segment attaches
   dir: [number, number] = [0, -1];
   rects: Rect[] = [];
@@ -155,7 +185,9 @@ class CourseBuilder {
   /** A waypoint on the risky line only. */
   riskyWp(p: Vec3, extra: Omit<RoutePoint, 'p'> = {}) { this.alt.push(this.point(p, extra)); }
   /** Whether the course wants a star of `kind` here (check before building extra pieces for it). */
-  offers(kind: StarKind): boolean { return this.wantStar && (kind === 'spur' || !this.starKinds.includes(kind)); }
+  offers(kind: StarKind): boolean {
+    return this.wantStar && !this.offKinds.has(kind) && (kind === 'spur' || !this.starKinds.includes(kind));
+  }
   /**
    * Puts a star of `kind` `lift` above point `p` if the course wants one here. `extra` makes it
    * ride (`to`/`period`, `center`/`speed`, in absolute coordinates) or a switch star (`button`).
@@ -852,6 +884,379 @@ const SEGMENTS: Record<Segment, Build> = {
     return true;
   },
 
+  // ---------- Moving floors and obstacles on the clock ----------
+
+  brakePad(b, rand, _opts, d) {
+    // A steep slope down onto a small pad with no walls, the way on leaving from its side: brake
+    // in time, or roll straight off the far edge.
+    const top = 8, len = 14, drop = r2(mix(4, 6, d)), size = r2(mix(9, 6.5, d)), s = rand() < 0.5 ? 1 : -1, exit = 12;
+    const foot = top + len, mid = foot + size / 2;
+    if (!b.claim(b.cur, b.at(foot + size, 0, -drop), Math.max(5, size / 2 + 1))) return false;
+    if (!b.claim(b.at(mid, s * size / 2, -drop), b.at(mid, s * (size / 2 + exit), -drop), 4)) return false;
+    b.pad(b.at(top / 2), 10, top, 'grey');
+    b.pieces.push({ type: 'checkpoint', position: b.at(top / 2) });
+    b.pieces.push({ type: 'path', from: b.at(top), to: b.at(foot, 0, -drop), width: 7, rails: true, palette: b.palette() });
+    const [w, , depth] = b.size(size, 1, size), centre = b.at(mid, 0, -drop);
+    b.pieces.push({ type: 'pad', center: centre, w, d: depth, palette: 'orange', open: true });
+    const out = b.at(mid, s * (size / 2 + exit), -drop);
+    b.pieces.push({ type: 'path', from: b.at(mid, s * size / 2, -drop), to: out, width: 6, rails: true, palette: b.palette() });
+    b.wp(b.at(top - 1), { speed: 6, lane: 0 });
+    b.wp(b.at(foot - 3, 0, -drop * (len - 3) / len), { speed: 4, lane: 0 });
+    b.wp(centre, { speed: 2.5, lane: 0 });
+    // A star just past the far edge: stop right at the brink to reach it.
+    if (b.star(b.at(mid + size / 2 + 0.6, 0, -drop), 'lip')) b.riskyWp(b.at(mid + size / 2 - 0.7, 0, -drop), { speed: 2, lane: 0, catch: true });
+    b.wp(b.at(mid, s * (size / 2 + 3), -drop), { speed: 6, lane: 0 });
+    b.wp(out, { speed: 9 });
+    b.checkpointsSince = 0;
+    const [rx, rz] = b.right;
+    b.dir = [rx * s, rz * s];
+    b.cur = out;
+    return true;
+  },
+  pinball(b, rand, _opts, d) {
+    // Toadstools sliding to and fro across a lane: slip past each row while it's over to one side.
+    // The hardest has no walls, so a knock sends you off.
+    const len = 30, width = 12, rows = d < 0.5 ? [9, 19] : [8, 15, 22], open = d >= 0.6;
+    const to = b.at(len);
+    if (!b.claim(b.cur, to, width / 2 + 5)) return false;
+    b.pieces.push({ type: 'path', from: b.cur, to, width, palette: b.palette(), ...(open ? { open: true } : {}) });
+    b.wp(b.at(2), { speed: 8, lane: 0 });
+    const s0 = rand() < 0.5 ? 1 : -1, pocket = b.offers('pocket') ? Math.floor(rand() * rows.length) : -1;
+    rows.forEach((ahead, i) => {
+      const side = i % 2 ? -s0 : s0, period = q4(mix(4, 2.8, d) + rand() * 0.4), phase = q4(rand() * period);
+      b.wp(b.at(ahead - 4), { speed: 9, lane: 0, timed: true });
+      if (i !== pocket) {
+        b.pieces.push({ type: 'bumper', position: b.at(ahead, side * 4.2), to: b.at(ahead, -side * 4.2), period, phase });
+        return;
+      }
+      // A pocket off the lane that this toadstool slides right into, with a star in it: dart in
+      // while it's over at the far side, and out before it comes back.
+      b.pieces.push({ type: 'bumper', position: b.at(ahead, side * 4.2), to: b.at(ahead, -side * 7.6), period: q4(period * 1.6), phase });
+      const [w, , depth] = b.size(4, 1, 4);
+      b.pieces.push({ type: 'pad', center: b.at(ahead, -side * 8), w, d: depth, palette: 'grey' });
+      b.star(b.at(ahead, -side * 8.2), 'pocket');
+      b.riskyWp(b.at(ahead, -side * 8.6), { speed: 7, lane: 0 }); // bots turn back 2 short of a waypoint: aim past the star
+    });
+    b.wp(b.at(len - 1), { speed: 10 });
+    b.cur = to;
+    return true;
+  },
+  keys(b, rand, _opts, d) {
+    // Piano keys that sink away and come back up one after another, so a wave runs along them:
+    // keep pace with the beat.
+    const n = Math.round(mix(4, 6, d)), key = 4, span = n * key, end = 8 + span + 8;
+    const period = q4(mix(5.2, 4.2, d)), hold = Math.round(mix(0.38, 0.32, d) * 100) / 100, beat = 0.6; // the wave runs at about 6.5 units/s
+    if (!b.claim(b.cur, b.at(end), 8)) return false;
+    b.pad(b.at(4), 10, 8, 'grey');
+    b.pieces.push({ type: 'checkpoint', position: b.at(4) });
+    const [w, , depth] = b.size(6, 1, key);
+    const star = b.offers('beat') ? n - 1 : -1, s = rand() < 0.5 ? 1 : -1; // beside the last key: step out, then on to solid ground
+    const keyAt = (i: number, side = 0) => b.at(8 + key * (i + 0.5), side);
+    b.wp(b.at(6.5), { speed: 6.5, lane: 0, timed: true });
+    for (let i = 0; i < n; i++) {
+      const top = keyAt(i), phase = q4((((-i * beat) % period) + period) % period);
+      b.pieces.push({ type: 'mover', from: top, to: [top[0], top[1] - 22, top[2]], w, d: depth, period, phase, hold, palette: 'grey' });
+      if (i !== star) continue;
+      // A key off to one side with the star over it. It keeps time with this one but stays up
+      // a little longer, so there's time to step out to the star and on to the pad.
+      const side = keyAt(i, s * 5.5), [sw, , sd] = b.size(5, 1, key);
+      const sideHold = Math.round((hold + 0.08) * 100) / 100, sidePhase = q4((((phase - 0.3) % period) + period) % period);
+      b.pieces.push({ type: 'mover', from: side, to: [side[0], side[1] - 22, side[2]], w: sw, d: sd, period, phase: sidePhase, hold: sideHold, palette: 'grey' });
+      b.star(keyAt(i, s * 4.8), 'beat', { ride: b.pieces.length - 1 }); // on its inner half: one step out
+      b.riskyWp(keyAt(i - 1), { speed: 6.5, lane: 0 });
+      b.riskyWp(keyAt(i, s * 5.6), { speed: 6.5, lane: 0 }); // bots turn back 2 short of a waypoint
+      b.riskyWp(b.at(8 + span + 2, s * 2.5), { speed: 6.5, lane: 0 });
+    }
+    b.pad(b.at(8 + span + 4), 10, 8, 'grey');
+    b.wp(b.at(8 + span + 3), { speed: 6.5, lane: 0 });
+    b.checkpointsSince = 0;
+    b.cur = b.at(end);
+    return true;
+  },
+  turntable(b, rand, _opts, d) {
+    // A turning disc with a low rim, open at two opposite gaps: roll on as a gap comes round,
+    // ride it a quarter turn, and roll off to the side when a gap lines up with the way out.
+    const r = r2(mix(8.5, 7, d)), speed = (Math.round(mix(0.5, 0.8, d) * 10) / 10) * (rand() < 0.5 ? 1 : -1), s = rand() < 0.5 ? 1 : -1;
+    const c = 8 + r + 0.4, out = r + 0.4;
+    if (!b.claim(b.cur, b.at(c + r + 1), r + 1)) return false;
+    if (!b.claim(b.at(c, s * out), b.at(c, s * (out + 10)), 5)) return false;
+    b.pad(b.at(4), 10, 8, 'grey');
+    b.pieces.push({ type: 'checkpoint', position: b.at(4) });
+    const centre = b.at(c), gap = Math.round(rand() * 36) * 10;
+    b.pieces.push({ type: 'turntable', center: centre, radius: r, speed, gaps: [gap, gap + 180] });
+    const disc = b.pieces.length - 1, exit = b.at(c, s * (out + 5)), next = b.at(c, s * (out + 10));
+    b.pad(exit, 10, 10, 'grey');
+    b.wp(b.at(6), { speed: 8, lane: 0, timed: true });
+    b.wp(centre, { speed: 5, lane: 0, timed: true });
+    // A star riding the disc near its rim, halfway between the gaps: wait out there for it.
+    const a = ((gap + 90) * Math.PI) / 180;
+    if (b.star([centre[0] + (r - 1.6) * Math.cos(a), centre[1], centre[2] - (r - 1.6) * Math.sin(a)], 'rim', { ride: disc })) {
+      b.riskyWp(b.at(c + r - 2.2), { speed: 4, lane: 0, catch: true });
+      b.riskyWp(centre, { speed: 5, lane: 0, timed: true });
+    }
+    b.wp(exit, { speed: 7, lane: 0 });
+    b.checkpointsSince = 0;
+    const [rx, rz] = b.right;
+    b.dir = [rx * s, rz * s];
+    b.cur = next;
+    return true;
+  },
+  pendulum(b, rand, _opts, d) {
+    // Conkers on strings swinging across a bridge: time each one. Under each swing the bridge
+    // widens into a pad with no walls.
+    const count = d < 0.5 ? 1 : 2, len = 10 + count * 10, width = r2(mix(5, 4, d));
+    const period = q4(mix(3.4, 2.8, d)), swing = 50, rod = 7.5, bob = 1.3, low = 0.6 + bob * 0.8; // the bob's centre at the bottom of its swing
+    const out = rod * Math.sin((swing * Math.PI) / 180) + bob + 1; // the gantry posts, clear of the swing
+    if (!b.claim(b.cur, b.at(len), out + 1)) return false;
+    b.pieces.push({ type: 'path', from: b.cur, to: b.at(len), width, palette: 'orange' });
+    b.wp(b.at(1), { speed: 8, lane: 0 });
+    const s = rand() < 0.5 ? 1 : -1, star = b.offers('arc') ? Math.floor(rand() * count) : -1;
+    for (let i = 0; i < count; i++) {
+      const at = 10 + i * 10, floor = b.at(at), [w, , depth] = b.size(8, 1, 6);
+      b.pieces.push({ type: 'pad', center: floor, w, d: depth, palette: 'orange', open: true });
+      const pivot: Vec3 = [floor[0], floor[1] + low + rod, floor[2]];
+      b.pieces.push({ type: 'pendulum', pivot, length: rod, swing, period, phase: q4((i * period) / 2 + rand() * 0.5), yaw: b.yaw, radius: bob });
+      // Hung from a line between two garden canes (thin, so the camera sees past them).
+      const h = low + rod + 6; // the canes reach down out of sight
+      for (const side of [-1, 1]) b.pieces.push({ type: 'block', position: b.at(at, side * out, low + rod - h / 2 + 0.2), size: b.size(0.3, h, 0.3), color: '#c9a66b' });
+      b.pieces.push({ type: 'block', position: b.at(at, 0, low + rod + 0.1), size: b.size(2 * out + 0.3, 0.12, 0.12), color: '#efe3c8' });
+      b.wp(b.at(at - 4.5), { speed: 9, lane: 0, timed: true });
+      // A star out at the pad's edge, right where the bob comes low.
+      if (i === star && b.star(b.at(at, s * 3), 'arc')) b.riskyWp(b.at(at, s * 2.6), { speed: 7, lane: 0 });
+    }
+    b.wp(b.at(len), { speed: 9, lane: 0 });
+    b.cur = b.at(len);
+    return true;
+  },
+  rocker(b, rand, _opts, d) {
+    // A ruler balanced on an eraser, tipping from side to side: cross while it's level, or hug
+    // the high side.
+    const len = 16, width = r2(mix(5, 4, d)), tilt = Math.round(mix(6, 12, d)), period = q4(mix(5, 3.5, d)), end = 8 + len + 8;
+    if (!b.claim(b.cur, b.at(end), 6)) return false;
+    b.pad(b.at(4), 10, 8, 'grey');
+    b.pieces.push({ type: 'checkpoint', position: b.at(4) });
+    const [w, , depth] = b.size(width, 1, len);
+    b.pieces.push({ type: 'rocker', center: b.at(8 + len / 2), w, d: depth, tilt, period, phase: q4(rand() * period) });
+    b.pieces.push({ type: 'block', position: b.at(8 + len / 2, 0, -1.75), size: b.size(1.4, 1.4, len - 2), color: '#f28482' }); // the eraser
+    b.pad(b.at(8 + len + 4), 10, 8, 'grey');
+    b.wp(b.at(6.5), { speed: 7, lane: 0, timed: true });
+    // A star just off one edge, low: go out to the side that dips.
+    const s = rand() < 0.5 ? 1 : -1;
+    if (b.star(b.at(8 + len / 2, s * (width / 2 + 0.6)), 'tilt', {}, 1)) {
+      b.riskyWp(b.at(8 + len / 2 - 4, s * (width / 2 - 1.1)), { speed: 5, lane: 0 });
+      b.riskyWp(b.at(8 + len / 2 + 1, s * (width / 2 - 1.1)), { speed: 5, lane: 0 });
+    }
+    b.wp(b.at(8 + len + 3), { speed: 8, lane: 0 });
+    b.checkpointsSince = 0;
+    b.cur = b.at(end);
+    return true;
+  },
+  rollers(b, rand, _opts, d) {
+    // Logs rolling across the way, row after row, out of a pipe on one side and off the far
+    // edge: cross each row in a gap. No walls: a log shoves you off.
+    const rows = d < 0.5 ? 2 : 3, width = 14, row = 4, strip = 3, speed = mix(7, 12, d);
+    const span = strip + rows * (row + strip), end = 6 + span + 6;
+    if (!b.claim(b.cur, b.at(end), width / 2 + 5)) return false;
+    b.pad(b.at(3), 10, 6, 'grey');
+    b.pieces.push({ type: 'checkpoint', position: b.at(3) });
+    const [w, , depth] = b.size(width, 1, span);
+    b.pieces.push({ type: 'pad', center: b.at(6 + span / 2), w, d: depth, palette: b.palette(), open: true });
+    b.pad(b.at(6 + span + 3), 10, 6, 'grey');
+    b.wp(b.at(4.5), { speed: 7, lane: 0 });
+    const a0 = rand() < 0.5 ? 1 : -1, star = b.offers('pinch') ? Math.floor(rand() * rows) : -1, s = rand() < 0.5 ? 1 : -1;
+    const period = q4((width + 6.6) / speed);
+    for (let k = 0; k < rows; k++) {
+      const a = k % 2 ? -a0 : a0, ahead = 6 + strip + k * (row + strip) + row / 2;
+      b.wp(b.at(ahead - row / 2 - strip / 2), { speed: 8, lane: 0, timed: true });
+      b.pieces.push({ type: 'roller', from: b.at(ahead, -a * (width / 2 + 1.6)), to: b.at(ahead, a * (width / 2 + 5)), period, phase: q4(rand() * period), length: 3 });
+      b.pieces.push({ type: 'block', position: b.at(ahead, -a * (width / 2 + 2.4), 1.4), size: b.size(3.6, 2.8, row + 0.4), color: '#6c757d' }); // the pipe they come out of
+      // A star out in the row, off the straight line: wait for a gap long enough to get there.
+      if (k === star && b.star(b.at(ahead, s * 3.5), 'pinch')) b.riskyWp(b.at(ahead, s * 3), { speed: 8, lane: 0 });
+    }
+    b.wp(b.at(6 + span - strip / 2), { speed: 8, lane: 0 });
+    b.wp(b.at(6 + span + 3), { speed: 8 });
+    b.checkpointsSince = 0;
+    b.cur = b.at(end);
+    return true;
+  },
+  paperWall(b, rand, _opts, d) {
+    // Paper walls across a lane, each with a narrow gap at one side: weave through the gaps, or
+    // take the boost and tear straight through.
+    const len = 40, width = 10, g = rand() < 0.5 ? 1 : -1, tear = Math.round(mix(14, 18, d)), walls = [12, 20];
+    const to = b.at(len);
+    if (!b.claim(b.cur, to, width / 2 + 1)) return false;
+    b.pieces.push({ type: 'path', from: b.cur, to, width, rails: true, palette: b.palette() });
+    b.pieces.push({ type: 'boost', position: b.at(5), yaw: b.yaw, w: 3, d: 3 });
+    // A switch star past the second wall: only tearing straight through beats its timer.
+    const smash = b.star(b.at(32), 'smash', { button: b.at(1.5), time: SWITCH_TIME });
+    const weave = (p: Vec3, speed: number) => (smash ? b.safeWp(p, { speed, lane: 0 }) : b.wp(p, { speed, lane: 0 })); // without the star, both lines weave
+    weave(b.at(3, g * 3.5), 7);
+    if (smash) {
+      b.riskyWp(b.at(2.5), { speed: 12, lane: 0 });
+      b.fast(b.at(7), 30, 'risky');
+    }
+    walls.forEach((ahead, i) => {
+      const gap = i % 2 ? -g : g; // a 3-wide gap at the rail on this side; the paper fills the rest
+      b.pieces.push({ type: 'paper', position: b.at(ahead, -gap * 1.5), w: width - 3, yaw: b.yaw, speed: tear });
+      weave(b.at(ahead - 1.5, gap * 3.5), 6);
+      weave(b.at(ahead + 1.5, gap * 3.5), 6);
+    });
+    // Aim well past the walls: bots ease off as they near a waypoint.
+    if (smash) b.fast(b.at(len - 1), 30, 'risky');
+    b.wp(b.at(len - 1), { speed: 8 });
+    b.cur = to;
+    return true;
+  },
+
+  ironBall(b, rand, _opts, d) {
+    // A giant iron ball sitting just past the end of the start pad, its top a little above the
+    // pad: roll onto it, push it across a pit of spikes keeping your balance on top, and roll off
+    // onto the landing. Fall off: spikes.
+    const R = 3, len = Math.round(mix(18, 26, d)), width = 12, low = 0.5, floorY = low - 2 * R;
+    const C = 8 + 2.4, back = C - R, far = back + len, end = far + 10; // the pad stops 2.4 short of its middle: clear of it
+    if (!b.claim(b.cur, b.at(end, 0, low), width / 2 + 1)) return false;
+    b.pad(b.at(4), 10, 8, 'grey', 0.5); // thin, so its edge clears the ball's curve underneath
+    b.pieces.push({ type: 'checkpoint', position: b.at(4) });
+    // The pit: a wall under the pad end for the ball to rest against, spikes, and walls up to the ball's middle.
+    b.pieces.push({ type: 'block', position: b.at(back - 0.3, 0, (floorY - 0.6) / 2), size: b.size(width, -0.6 - floorY, 0.5), color: '#6c757d' });
+    const [w, , depth] = b.size(width, 1, len);
+    b.pieces.push({ type: 'spikes', center: b.at(back + len / 2, 0, floorY), w, d: depth });
+    for (const side of [-1, 1]) {
+      b.pieces.push({ type: 'block', position: b.at(back + len / 2, side * (width / 2 + 0.25), floorY + 1.5), size: b.size(0.5, 3, len), color: '#6c757d' });
+    }
+    // It rolls on by itself while you ride it, faster when harder: you steer and keep your balance.
+    b.pieces.push({ type: 'ironball', position: b.at(C, 0, floorY), radius: R, roll: Math.round(mix(2.5, 4, d) * 10) / 10, yaw: b.yaw });
+    // The landing: a lip over the pit at the height of the ball's top; the ball stops under it.
+    b.pieces.push({ type: 'path', from: b.at(far - 2.4, 0, low), to: b.at(far, 0, low), width: 6, thickness: 0.4, palette: 'orange' });
+    b.pad(b.at(far + 5, 0, low), 10, 10, 'grey', 2 * R + 1.4);
+    b.wp(b.at(6), { speed: 4, lane: 0 });
+    b.wp(b.at(C, 0, low), { speed: 1.5, lane: 0 }); // onto the top, and find your balance before setting off
+    // A star over the field, off to one side: steer the ball over there.
+    const s = rand() < 0.5 ? 1 : -1, mid = back + Math.max(len / 2, 12); // far enough along to drift over to it, not turn hard
+    if (b.star(b.at(mid, s * 3, low), 'steer')) b.riskyWp(b.at(mid + 2, s * 2.5, low), { speed: 3, lane: 0 }); // just past it (bots turn 2 short); clear of the wall
+    b.wp(b.at(far - R - 1, 0, low), { speed: 3, lane: 0 });
+    b.wp(b.at(far + 3, 0, low), { speed: 5, lane: 0 });
+    b.checkpointsSince = 0;
+    b.cur = b.at(end, 0, low);
+    return true;
+  },
+  wheel(b, rand, _opts, d) {
+    // A Ferris wheel of level steps turning across the course: roll onto a step at the bottom,
+    // ride it up, and roll off onto the high ledge ahead when it gets to the top.
+    // The steps move at about 3 units/s whatever the size, so getting on is the same timing.
+    const R = r2(mix(6, 8, d)), steps = d < 0.5 ? 6 : 5, speed = (Math.round((mix(2.7, 3.2, d) / R) * 100) / 100) * (rand() < 0.5 ? 1 : -1);
+    const A = 8 + 2 + 0.3, top = 2 * R, ledge = A + 2.3, end = ledge + 12;
+    if (!b.claim(b.cur, b.at(end, 0, top), R + 3, top)) return false;
+    b.pad(b.at(4), 10, 8, 'grey');
+    b.pieces.push({ type: 'checkpoint', position: b.at(4) });
+    b.pieces.push({ type: 'wheel', center: b.at(A, 0, R), radius: R, speed, steps, w: 4, d: 4, yaw: b.yaw });
+    b.pad(b.at(ledge + 6, 0, top), 10, 12, 'grey'); // a ledge, not a tower, so you can see the wheel turning under it
+    // A switch star: its button off to the side of the start pad, the star on the ledge. Only
+    // boarding the very next step beats the timer.
+    const button = b.at(3, (rand() < 0.5 ? 1 : -1) * 3);
+    if (b.star(b.at(ledge + 4, 0, top), 'climb', { button, time: SWITCH_TIME })) b.riskyWp(button, { speed: 5, lane: 0 });
+    b.wp(b.at(7.2), { speed: 4, lane: 0 });
+    b.wp(b.at(A - 1), { speed: 5, lane: 0, wait: true });      // a step coming past: on
+    b.wp(b.at(A, 0, top), { speed: 3, lane: 0, ride: true });  // ride it to the top
+    b.wp(b.at(ledge + 3, 0, top), { speed: 6, lane: 0 });
+    b.checkpointsSince = 0;
+    b.cur = b.at(end, 0, top);
+    return true;
+  },
+  trickGates(b, rand, _opts, d) {
+    // Doors across the way, only one open at a time and all switching at once: pick the open one
+    // and get through before it shuts. The hardest has a second row, out of step with the first.
+    const doors = d < 0.5 ? 2 : 3, lane = 4.5, wall = 0.6, w = Math.round(mix(1.8, 1.2, d) * 4) / 4; // seconds each door is open
+    const period = doors * w, rows = d < 0.6 ? [12] : [12, 22], peek = b.offers('peek');
+    const width = doors * lane + (doors + 1) * wall + (peek ? 3.2 + wall : 0), len = rows[rows.length - 1] + 8;
+    const s = rand() < 0.5 ? 1 : -1; // the side the peek lane is on
+    if (!b.claim(b.cur, b.at(len), width / 2 + 1)) return false;
+    b.pieces.push({ type: 'path', from: b.cur, to: b.at(len), width, palette: b.palette() });
+    const left = -width / 2;
+    const laneAt = (k: number) => s * (left + wall + k * (lane + wall) + lane / 2); // door lanes from the side away from the peek lane
+    b.wp(b.at(4), { speed: 7, lane: 0 });
+    rows.forEach((ahead, r) => {
+      const shift = r * (w / 2), pick = Math.floor(rand() * doors);
+      for (let k = 0; k <= doors; k++) {
+        // Walls between the doors, so the only way through is a door.
+        const x = s * (left + k * (lane + wall) + wall / 2);
+        b.pieces.push({ type: 'block', position: b.at(ahead, x, 1.3), size: b.size(wall, 2.6, 3), color: '#d9cbb0' });
+      }
+      for (let k = 0; k < doors; k++) {
+        const order = r % 2 ? doors - 1 - k : k; // the second row opens the other way along
+        const phase = q4((((period - w - 0.35 - order * w + shift) % period) + period) % period);
+        b.pieces.push({ type: 'gate', position: b.at(ahead, laneAt(k)), w: lane, yaw: b.yaw, period, phase, open: 1 / doors });
+      }
+      b.safeWp(b.at(ahead - 3.5, laneAt(pick)), { speed: 7, lane: 0, timed: true });
+      b.safeWp(b.at(ahead + 3.5, laneAt(pick)), { speed: 7, lane: 0 });
+      if (!peek) {
+        b.riskyWp(b.at(ahead - 3.5, laneAt(pick)), { speed: 7, lane: 0, timed: true });
+        b.riskyWp(b.at(ahead + 3.5, laneAt(pick)), { speed: 7, lane: 0 });
+      }
+    });
+    if (peek) {
+      // A narrow lane at the side with its own door that opens only briefly, and the star past it.
+      const x = s * (width / 2 - 1.6), ahead = rows[0];
+      b.pieces.push({ type: 'gate', position: b.at(ahead, x), w: 3.2, yaw: b.yaw, period: period * 2, phase: q4(rand() * period), open: w / (period * 2) }); // open as long as the others, half as often
+      b.star(b.at(ahead + 4, x), 'peek');
+      b.riskyWp(b.at(ahead - 3.5, x), { speed: 7, lane: 0, timed: true });
+      b.riskyWp(b.at(ahead + 4, x), { speed: 7, lane: 0 });
+      b.riskyWp(b.at(len - 3, x), { speed: 7, lane: 0 }); // on along the narrow lane: it has no door after this
+
+    }
+    b.wp(b.at(len - 1), { speed: 8 });
+    b.cur = b.at(len);
+    return true;
+  },
+  logSlope(b, rand, _opts, d) {
+    // Climb a slope while logs roll down it at you. Two bays at one side let you wait out of the
+    // way; dash up the outer lane from bay to bay when its log has gone by. At the top the way on
+    // turns off to the other side.
+    const lanes = d < 0.5 ? 2 : 3, laneW = 4, width = lanes * laneW + 2, len = 30, rise = r2(mix(4, 6, d)), speed = mix(7, 9, d);
+    const s = rand() < 0.5 ? 1 : -1, bay = width / 2 + 2.5, exit = 12;
+    const outer = -s * (width / 2 - 1 - laneW / 2); // the lane the bays open onto
+    const at = (along: number, side = 0) => b.at(8 + along, side, (rise * Math.max(0, Math.min(len, along))) / len);
+    if (!b.claim(b.cur, b.at(8 + len + 8, 0, rise), bay + 3, rise)) return false;
+    if (!b.claim(b.at(8 + len + 4, s * width / 2, rise), b.at(8 + len + 4, s * (width / 2 + exit), rise), 4)) return false;
+    b.pad(b.at(4), width, 8, 'grey');
+    b.pieces.push({ type: 'checkpoint', position: b.at(4) });
+    b.pieces.push({ type: 'path', from: b.at(8), to: b.at(8 + len, 0, rise), width, palette: b.palette() });
+    const [tw, , td] = b.size(width, 1, 8);
+    b.pieces.push({ type: 'pad', center: b.at(8 + len + 4, 0, rise), w: tw, d: td, palette: 'grey' });
+    const out = b.at(8 + len + 4, s * (width / 2 + exit), rise);
+    b.pieces.push({ type: 'path', from: b.at(8 + len + 4, s * width / 2, rise), to: out, width: 6, rails: true, palette: b.palette() });
+    // Logs: one per lane, rolling from the crest to just above the foot again and again. The lane
+    // next to the outer one runs a moment ahead of it (so there's a gap to dodge into); any third
+    // lane runs half a cycle off.
+    // Each launcher holds its next log a while between runs, leaving room to dodge between them.
+    const wait = q4(mix(2.2, 1.4, d)), period = q4(Math.hypot(len, rise) / speed + wait), base = rand() * period, kOuter = s > 0 ? 0 : lanes - 1;
+    for (let k = 0; k < lanes; k++) {
+      const x = -width / 2 + 1 + laneW * (k + 0.5), apart = Math.abs(k - kOuter);
+      const phase = base + (apart === 0 ? 0 : apart === 1 ? 0.4 : period / 2);
+      b.pieces.push({ type: 'roller', from: at(len, x), to: at(1.5, x), period, phase: q4(phase % period), length: laneW - 0.6, launcher: true, wait });
+    }
+    // The bays: ledges alongside the slope, long enough to step into on the way up.
+    const bays = [len * 0.28, len * 0.68];
+    for (const along of bays) b.pieces.push({ type: 'path', from: at(along - 4, -s * bay), to: at(along + 4, -s * bay), width: 5, palette: 'grey' });
+    b.wp(b.at(6.5, outer), { speed: 7, lane: 0, timed: true }); // at the foot of the outer lane (the logs are gone by here)
+    b.wp(at(bays[0] - 1.5, outer), { speed: 7, lane: 0 });         // up it, then sideways into the bay
+    b.wp(at(bays[0], -s * bay), { speed: 6, lane: 0, timed: true });
+    b.wp(at(len / 2, outer), { speed: 7, lane: 0 });
+    b.wp(at(bays[1], -s * bay), { speed: 6, lane: 0, timed: true });
+    // Up the outer lane onto the top, then across it (logs start at the crest, not up there). A
+    // star over the edge of the next lane in, just above the bay: dodge two logs, not one.
+    if (b.star(at(bays[1] + 3, outer + s * 2.2), 'dodge')) b.riskyWp(at(bays[1] + 3, outer + s * 1.6), { speed: 7, lane: 0 });
+    b.wp(at(len - 1, outer), { speed: 7, lane: 0 });
+    b.wp(at(len + 2.5, outer), { speed: 7, lane: 0 });
+    b.wp(at(len + 4, s * 2), { speed: 7, lane: 0 });
+    b.wp(out, { speed: 8 });
+    b.checkpointsSince = 0;
+    const [rx, rz] = b.right;
+    b.dir = [rx * s, rz * s];
+    b.cur = out;
+    return true;
+  },
+
   // ---------- Risk/reward ----------
 
   fork(b, rand, _opts, d) {
@@ -994,6 +1399,9 @@ const SEGMENTS: Record<Segment, Build> = {
   },
 };
 
+/** Every segment, at run time (MECHANICS.md lists each one). */
+export const SEGMENT_NAMES = Object.keys(SEGMENTS) as Segment[];
+
 /** Segments that give you a breather: no gap, hazard or timing to get right. */
 const BREATHERS = new Set<Segment>(['straight', 'rampDown', 'rampUp', 'turn', 'curve', 'hairpin', 'stairs', 'steep', 'spiral', 'cascade', 'conveyor', 'boostRamp', 'split']);
 /** Segments that can hide a star (each in its own way; see StarKind). Treadmills can't: stop on one to reach a star and you never get going again. */
@@ -1001,6 +1409,8 @@ const STAR_SEGMENTS = new Set<Segment>([
   'springUp', 'boostSpring', 'jump', 'crumbleJump', 'boostJump', 'moonJump', 'updraft', 'drop', 'crumbleBridge', 'windCrumble',
   'windBridge', 'liftWind', 'bridge', 'split', 'zigzag', 'gauntlet', 'sweeper', 'lift', 'mover', 'fork', 'hairpin', 'spiral',
   'steep', 'cascade', 'boostRamp', 'conveyor', 'starSpur',
+  'brakePad', 'pinball', 'keys', 'turntable', 'pendulum', 'rocker', 'rollers', 'paperWall',
+  'ironBall', 'wheel', 'trickGates', 'logSlope',
 ]);
 export type Act = 'intro' | 'build' | 'twist' | 'finale';
 interface Slot { act: Act; d: number; forced?: Segment }
@@ -1008,7 +1418,7 @@ interface Slot { act: Act; d: number; forced?: Segment }
 /** The course's segments in order: which act each belongs to and how hard it is. */
 function planSlots(opts: GenOptions): Slot[] {
   const n = opts.length;
-  if (!opts.acts) return Array.from({ length: n }, () => ({ act: 'build', d: 1 })); // the old flat draw
+  if (!opts.acts) return Array.from({ length: n }, () => ({ act: 'build', d: opts.difficulty ?? 1 })); // the old flat draw
   const finale = n >= 10 ? 2 : 1;
   const intro = Math.max(1, Math.round(n * 0.2)), twist = Math.max(1, Math.round(n * 0.2));
   const build = Math.max(1, n - intro - twist - finale);
@@ -1069,15 +1479,24 @@ function place(b: CourseBuilder, seg: Segment, rand: () => number, opts: GenOpti
 /** Chains the planned segments onto the builder, then a goal pad. False if they don't fit. */
 function buildCourse(b: CourseBuilder, rand: () => number, opts: GenOptions): boolean {
   const slots = planSlots(opts);
-  const acts = opts.acts;
-  const build = picker(rand, opts.weights);
+  // Leave out whatever MECHANICS.md switches off; an act left empty draws from the build-up instead.
+  const off = new Set(opts.off?.segments ?? []);
+  b.offKinds = new Set(opts.off?.stars ?? []);
+  const on = (list: Segment[]) => list.filter((seg) => !off.has(seg));
+  const weights = Object.fromEntries(Object.entries(opts.weights).filter(([seg]) => !off.has(seg as Segment))) as GenOptions['weights'];
+  if (!Object.keys(weights).length) throw new Error(`${opts.name}: every segment it uses is switched off in MECHANICS.md`);
+  const acts = opts.acts && { intro: on(opts.acts.intro), twist: on(opts.acts.twist), finale: on(opts.acts.finale) };
+  const build = picker(rand, weights);
+  const actPool = (list: Segment[]) => (list.length ? picker(rand, even(list)) : build);
   const pools: Record<Act, () => Segment> = acts
-    ? { intro: picker(rand, even(acts.intro)), build, twist: picker(rand, even(acts.twist.length ? acts.twist : ['fork'])), finale: picker(rand, even(acts.finale)) }
+    ? { intro: actPool(acts.intro), build, twist: actPool(acts.twist.length ? acts.twist : on(['fork'])), finale: actPool(acts.finale) }
     : { intro: build, build, twist: build, finale: build };
-  const calm = Object.fromEntries(Object.entries(opts.weights).filter(([seg]) => BREATHERS.has(seg as Segment)));
-  const breather = picker(rand, Object.keys(calm).length ? calm : { curve: 1, straight: 1 });
+  const calm = Object.fromEntries(Object.entries(weights).filter(([seg]) => BREATHERS.has(seg as Segment)));
+  const fallbackCalm = even(on(['curve', 'straight']));
+  const breather = picker(rand, Object.keys(calm).length ? calm : Object.keys(fallbackCalm).length ? fallbackCalm : weights);
   const poolSize: Record<Act, number> = {
-    intro: acts?.intro.length ?? 0, build: Object.keys(opts.weights).length, twist: acts?.twist.length ?? 0, finale: acts?.finale.length ?? 0,
+    intro: acts?.intro.length || Object.keys(weights).length, build: Object.keys(weights).length,
+    twist: acts?.twist.length || Object.keys(weights).length, finale: acts?.finale.length || Object.keys(weights).length,
   };
 
   // Stars: one per window of the course before the finale. The course's own mechanics (its
@@ -1099,7 +1518,7 @@ function buildCourse(b: CourseBuilder, rand: () => number, opts: GenOptions): bo
     let placed: Segment | null = null, kind: StarKind | undefined;
     for (let tries = 0; !placed && tries < 16; tries++) {
       let seg: Segment;
-      if (slot.forced && tries < 4) seg = slot.forced;
+      if (slot.forced && tries < 4 && !off.has(slot.forced)) seg = slot.forced;
       else if (acts && slot.act === 'intro' && i % 2 === 1) seg = breather(); // intro: show it, then a breather
       else if (acts && slot.act !== 'finale' && slot.act !== 'intro' && hardRun >= 2) seg = breather(); // two hard ones, then a breather
       else seg = pools[slot.act]();
@@ -1119,6 +1538,7 @@ function buildCourse(b: CourseBuilder, rand: () => number, opts: GenOptions): bo
 
     const windowEnds = starWindow >= 0 && (i === before - 1 || windowOf(i + 1) !== starWindow);
     if (windowEnds && b.starCount <= starWindow) {
+      if (off.has('starSpur')) return false; // no fallback left: try another seed
       b.wantStar = true;
       if (!place(b, 'starSpur', rand, opts, slot.d)) return false;
       opts.onSegment?.('starSpur', slot.act, slot.d, 'spur');

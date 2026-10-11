@@ -12,7 +12,7 @@ import { isValidName, randomName } from '../src/net/names';
 import {
   CODE_ALPHABET, CODE_LENGTH, COUNTDOWN_MS, FINISH_GRACE_MS, MAX_PLAYERS, MAX_RACE_MS, MSG, PATCH_MS,
   PLAYER_COLORS, PlayerState, QUICK_FILL, QUICK_FULL_HUMANS, QUICK_LOBBY_MS, QUICK_RESULTS_MS, RaceState,
-  RECONNECT_SECONDS, type BallUpdate, type Phase, type Ping,
+  RECONNECT_SECONDS, carrierOf, type BallUpdate, type Phase, type Ping,
 } from '../src/net/protocol';
 import { LIMITS, MoveChecker, routeProgress } from '../src/net/rules';
 import { gridSpot, resolveLevel, type ResolvedLevel } from '../src/sim/geometry';
@@ -315,6 +315,9 @@ export class RaceRoom extends Room<{ state: RaceState }> {
     p.t = u.t;
     [p.x, p.y, p.z] = u.p;
     [p.vx, p.vy, p.vz] = u.v;
+    const c = carrierOf(u);
+    p.carrier = !!c;
+    if (c) [p.cx, p.cy, p.cz] = c;
     p.progress = routeProgress(this.level(), u.p);
     if (result.finishTime !== undefined && MODE_INFO[this.mode].kind === 'race') {
       p.finishTime = result.finishTime;

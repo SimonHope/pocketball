@@ -30,6 +30,18 @@ export const SIM = {
   conveyorAccel: 20,  // how hard a belt drags you toward its speed (rolling push is 32)
   springCooldown: 0.3, // seconds before the same spring can launch you again
 
+  carrier: {
+    mass: 4,      // the iron ball (your ball is 1)
+    push: 2,      // how much of your push also rolls it while you're on top (its mass, 4, would move you both together)
+    damping: 0.3, // so it settles when you stop pushing
+    // Iron balls that roll on by themselves (`roll`):
+    rollAccel: 6,  // how quickly it gets up to its speed
+    steer: 5.6,    // your sideways push goes to it, times this: its mass (4), plus a bit for rolling not sliding
+    steerMax: 5,   // fastest you can steer it sideways
+    settle: 9,     // a gentle pull back to the top while you're near it (gravity tips you off at 6.25 per unit)
+    settleRange: 1.6, // further off the top than this and you're on your own
+  },
+
   fallDepth: 18,      // respawn once this far below the last floor touched
   fallPenalty: 2,     // seconds added on fall
   countdown: 3,

@@ -18,8 +18,9 @@ test('menu → race → pause → quit', async ({ page }) => {
   await page.locator('.level-card').first().click();
   await expect(page.locator('#level')).toHaveText('Warm-Up');
 
-  // Countdown, then roll forward for a moment.
-  await expect(page.locator('#banner')).toHaveText('GO!', { timeout: 6000 });
+  // Countdown, then roll forward for a moment. (The first course in a fresh browser also compiles
+  // its shaders, which is slow in the software WebGL these tests use.)
+  await expect(page.locator('#banner')).toHaveText('GO!', { timeout: 10_000 });
   await page.keyboard.down('KeyW');
   await page.waitForTimeout(1000);
   await page.keyboard.up('KeyW');
@@ -84,6 +85,38 @@ test('editor: validate, bot check, playtest', async ({ page }) => {
   await page.click('#btn-play');
   await expect(page).toHaveURL(/play=draft/);
   await expect(page.locator('#level')).toHaveText('New Course');
+  expect(errors).toEqual([]);
+});
+
+test('mechanic sandbox: plays one segment, links change it, the menu gives a new layout', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/?sandbox=turntable&d=0.5&star');
+  await expect(page.locator('#level')).toHaveText('Sandbox: turntable');
+  await expect(page.locator('#sandbox-tag')).toContainText('turntable · d 0.5');
+  await expect(page.locator('#banner')).toHaveText('GO!', { timeout: 10_000 });
+  await page.evaluate(() => (window as unknown as { __autopilot: (r: string) => void }).__autopilot('stars'));
+  await page.waitForTimeout(1500);
+  const perf = await page.evaluate(() => (window as unknown as { __perf: () => { calls: number } }).__perf());
+  expect(perf.calls).toBeLessThan(260);
+  await expect(page.locator('#sandbox-tag a', { hasText: 'harder' })).toHaveAttribute('href', /d=0\.75/);
+  await page.keyboard.press('Escape');
+  await page.click('#pause [data-action=quit]');
+  await expect(page).toHaveURL(/seed=\d+/); // a new layout of the same mechanic
+  await expect(page.locator('#level')).toHaveText('Sandbox: turntable');
+  expect(errors).toEqual([]);
+});
+
+test('mechanic sandbox: the iron ball and the spin wheel load and run', async ({ page }) => {
+  const errors = watchErrors(page);
+  for (const seg of ['ironBall', 'wheel']) {
+    await page.goto(`/?sandbox=${seg}&d=0.5&star`);
+    await expect(page.locator('#level')).toHaveText(`Sandbox: ${seg}`);
+    await expect(page.locator('#banner')).toHaveText('GO!', { timeout: 10_000 });
+    await page.evaluate(() => (window as unknown as { __autopilot: (r: string) => void }).__autopilot('main'));
+    await page.waitForTimeout(1500);
+    const perf = await page.evaluate(() => (window as unknown as { __perf: () => { calls: number } }).__perf());
+    expect(perf.calls).toBeLessThan(260);
+  }
   expect(errors).toEqual([]);
 });
 

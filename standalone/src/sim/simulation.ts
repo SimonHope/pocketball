@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { SIM } from '../config';
 import { THEMES } from '../levels/themes';
-import { poseAt, starAt, type ResolvedLevel, type Solid } from './geometry';
+import { pointVelocity, poseAt, starAt, type ResolvedLevel, type Solid } from './geometry';
 import type { Quat, Vec3 } from './math';
 
 // The authoritative game simulation: physics world, the ball, and race rules.
@@ -31,7 +31,9 @@ export type SimEvent =
   | { type: 'impact'; strength: number }
   | { type: 'boost'; solidId: number }
   | { type: 'spring'; solidId: number }
-  | { type: 'crumble'; solidId: number };
+  | { type: 'crumble'; solidId: number }
+  | { type: 'smash'; solidId: number; strength: number } // tore through a paper wall
+  | { type: 'hazard' };                                   // touched spikes (a `fall` follows)
 
 /** Another player's ball, as currently displayed. Each client resolves bumps for its own ball only. */
 export interface OtherBall {
@@ -83,10 +85,17 @@ export class Simulation {
   private moving: Solid[] = [];
   private platform: Solid | null = null;
   private platformVel: Vec3 = [0, 0, 0];
+  /** Turntables and rockers: the floor velocity already given to the ball (kept through small hops). */
+  private carried: Vec3 = [0, 0, 0];
   private events: SimEvent[] = [];
   private others: OtherBall[] = [];
   private touching = new Set<string>();
   private crumbles = new Map<number, { touchedAt: number | null; goneUntil: number | null }>();
+  /** Paper walls this player has torn through (until a respawn or restart). */
+  private torn = new Set<number>();
+  /** Iron balls: held still until you first land on one; back to the start when you respawn. */
+  private carriers = new Map<number, { live: boolean }>();
+  private ground: Solid | null = null;
   private lastEffect: Solid | null = null; // for one-shot effects (boost/spring events)
   private springReadyAt = 0;
 
@@ -97,23 +106,32 @@ export class Simulation {
     this.world.timestep = SIM.dt;
 
     for (const solid of level.solids) {
-      const bodyDesc = (solid.motion ? RAPIER.RigidBodyDesc.kinematicPositionBased() : RAPIER.RigidBodyDesc.fixed())
-        .setTranslation(...solid.position)
-        .setRotation(toQuat(solid.rotation));
+      const start = poseAt(solid, 0); // pieces with a phase don't start at their base pose
+      const carrier = solid.role === 'carrier';
+      const bodyDesc = (carrier ? RAPIER.RigidBodyDesc.dynamic().setCcdEnabled(true).setLinearDamping(SIM.carrier.damping).setAngularDamping(SIM.carrier.damping)
+        : solid.motion ? RAPIER.RigidBodyDesc.kinematicPositionBased() : RAPIER.RigidBodyDesc.fixed())
+        .setTranslation(...start.position)
+        .setRotation(toQuat(start.rotation));
       const body = this.world.createRigidBody(bodyDesc);
       const s = solid.shape;
       const colliderDesc = (s.kind === 'box'
         ? RAPIER.ColliderDesc.cuboid(s.size[0] / 2, s.size[1] / 2, s.size[2] / 2)
+        : s.kind === 'sphere' ? RAPIER.ColliderDesc.ball(s.radius).setMass(SIM.carrier.mass)
         : RAPIER.ColliderDesc.cylinder(s.height / 2, s.radius))
-        .setFriction(solid.role === 'floor' || solid.role === 'platform' ? SIM.friction * THEMES[level.theme].grip : SIM.wallFriction)
+        .setFriction(solid.role === 'floor' || solid.role === 'platform' || carrier ? SIM.friction * THEMES[level.theme].grip : SIM.wallFriction)
         .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
         .setRestitution(solid.role === 'bumper' ? SIM.bumperRestitution : SIM.restitution);
-      if (solid.role === 'bumper') colliderDesc.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+      if (solid.role === 'bumper' || solid.effect?.kind === 'breakable') colliderDesc.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
       const collider = this.world.createCollider(colliderDesc, body);
       this.bodies[solid.id] = body;
       this.colliderSolid.set(collider.handle, solid);
       if (solid.motion) this.moving.push(solid);
       if (solid.effect?.kind === 'crumble') this.crumbles.set(solid.id, { touchedAt: null, goneUntil: null });
+      if (carrier) {
+        this.carriers.set(solid.id, { live: false });
+        body.lockTranslations(true, false);
+        body.lockRotations(true, false);
+      }
     }
 
     const b = SIM.ball;
@@ -132,6 +150,29 @@ export class Simulation {
   }
 
   // ---------- Queries ----------
+
+  /** The iron ball the ball is resting on, if any: where it is and how it's moving (bots balance with this). */
+  carrier(): { position: Vec3; velocity: Vec3; dir?: Vec3 } | null {
+    if (this.ground?.role !== 'carrier') return null;
+    const body = this.bodies[this.ground.id], t = body.translation(), v = body.linvel();
+    const roll = this.ground.effect?.kind === 'roll' ? this.ground.effect : null;
+    return { position: [t.x, t.y, t.z], velocity: [v.x, v.y, v.z], ...(roll ? { dir: roll.dir } : {}) };
+  }
+
+  /** This player's iron ball while it's out of its starting place (sent to the others). */
+  carrierOut(): Vec3 | null {
+    for (const [id, c] of this.carriers) {
+      if (!c.live) continue;
+      const t = this.bodies[id].translation();
+      return [t.x, t.y, t.z];
+    }
+    return null;
+  }
+
+  /** Whether this player has torn through a paper wall (for rendering). */
+  isTorn(id: number): boolean {
+    return this.torn.has(id);
+  }
 
   /** Crumbling tile state for rendering: shaking (0..1 until it drops) or gone. */
   crumbleState(id: number): { shake: number; gone: boolean } {
@@ -239,10 +280,13 @@ export class Simulation {
     }
 
     const ground = this.groundSolid();
+    this.ground = ground;
     this.grounded = ground !== null;
+    if (ground?.role === 'carrier') this.boardCarrier(ground);
     this.rideMovingPlatform(ground);
     if (ground?.effect?.kind === 'conveyor') this.groundVelocity = scaleVec(ground.effect.dir, ground.effect.speed);
     if (this.phase === 'playing' && !this.out) this.push(input, dt);
+    this.driveCarrier(dt);
     this.applyEffects(ground, dt);
 
     const before = this.ball.linvel();
@@ -258,6 +302,16 @@ export class Simulation {
       if (solid?.role === 'bumper') {
         this.kick(solid);
         bumped = true;
+      } else if (solid?.effect?.kind === 'breakable' && !this.torn.has(solid.id)) {
+        // Fast enough: tear through, keeping the speed from before the hit (no bounce).
+        const speed = Math.hypot(before.x, before.z);
+        if (speed >= solid.effect.speed) {
+          this.torn.add(solid.id);
+          this.setSolidEnabled(solid.id, false);
+          this.setVelocityAndSpin(before);
+          this.events.push({ type: 'smash', solidId: solid.id, strength: speed });
+          bumped = true; // not a hard impact
+        }
       }
     });
     if (!bumped) {
@@ -279,6 +333,7 @@ export class Simulation {
     this.ball.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
     this.lastGroundY = this.spawn.position[1] - SIM.ball.radius;
     this.platform = null;
+    this.carried = [0, 0, 0];
   }
 
   private groundSolid(): Solid | null {
@@ -291,8 +346,34 @@ export class Simulation {
   // A rolling ball barely gets dragged along by a moving floor, so while standing on a
   // moving platform, pass its velocity changes straight to the ball.
   private rideMovingPlatform(ground: Solid | null) {
-    const moving = ground?.motion?.kind === 'oscillate' ? ground : null;
+    if (ground?.role === 'carrier' && ground.effect?.kind === 'roll') {
+      // A rolling iron ball carries you along with it (its centre's speed, not its surface's).
+      const c = this.bodies[ground.id].linvel(), u: Vec3 = [c.x, 0, c.z], v = this.ball.linvel();
+      this.ball.setLinvel({ x: v.x + u[0] - this.carried[0], y: v.y, z: v.z + u[2] - this.carried[2] }, true);
+      this.carried = u;
+      this.platform = null;
+      this.platformVel = u;
+      this.groundVelocity = u;
+      this.platformCenter = null;
+      return;
+    }
+    // Sliding platforms, turntables and rockers (floors that move; not a sweeper arm you land on).
+    const moving = ground?.motion && (ground.role === 'platform' || ground.role === 'floor') ? ground : null;
     const pose = moving ? poseAt(moving, this.time) : null;
+    if (moving && pose && moving.motion!.kind !== 'oscillate') {
+      // A turntable or rocker moves each point differently: the ball goes along with the point
+      // under it, from the moment it lands (friction alone would barely turn a rolling ball).
+      const u = pointVelocity(moving, this.contactPoint(), this.time);
+      const v = this.ball.linvel();
+      this.ball.setLinvel({ x: v.x + u[0] - this.carried[0], y: v.y, z: v.z + u[2] - this.carried[2] }, true);
+      this.carried = [u[0], 0, u[2]];
+      this.platform = moving;
+      this.platformVel = this.carried;
+      this.groundVelocity = this.carried;
+      this.platformCenter = pose.position;
+      return;
+    }
+    if (ground) this.carried = [0, 0, 0]; // back on solid ground (not just a hop)
     const vel: Vec3 = pose ? pose.velocity : [0, 0, 0];
     if (moving && moving === this.platform) {
       const v = this.ball.linvel();
@@ -304,6 +385,11 @@ export class Simulation {
     this.platformCenter = pose ? pose.position : null;
   }
 
+  private contactPoint(): Vec3 {
+    const p = this.ball.translation();
+    return [p.x, p.y - SIM.ball.radius, p.z];
+  }
+
   private push(input: Input, dt: number) {
     const mag = Math.hypot(input.x, input.z);
     if (mag < 1e-3) return;
@@ -313,7 +399,51 @@ export class Simulation {
     const v = this.ball.linvel(), g = this.groundVelocity;
     if ((v.x - g[0]) * dx + (v.z - g[2]) * dz > SIM.move.maxSpeed) return;
     const f = SIM.move.force * strength * (this.grounded ? 1 : SIM.move.airControl) * dt;
+    const roll = this.ground?.role === 'carrier' && this.ground.effect?.kind === 'roll' ? this.ground.effect : null;
+    if (roll) {
+      // A rolling iron ball: the sideways part of your push steers it (and it carries you along);
+      // the part along its way moves you over its top, which is the balancing.
+      const sx = -roll.dir[2], sz = roll.dir[0], side = dx * sx + dz * sz;
+      this.ball.applyImpulse({ x: (dx - sx * side) * f, y: 0, z: (dz - sz * side) * f }, true);
+      const body = this.bodies[this.ground!.id], cv = body.linvel(), sideways = cv.x * sx + cv.z * sz;
+      if (sideways * Math.sign(side) < SIM.carrier.steerMax) {
+        const k = f * side * SIM.carrier.steer;
+        body.applyImpulse({ x: sx * k, y: 0, z: sz * k }, true);
+      }
+      return;
+    }
     this.ball.applyImpulse({ x: dx * f, y: 0, z: dz * f }, true);
+    if (this.ground?.role !== 'carrier') return;
+    const body = this.bodies[this.ground.id];
+    {
+      // Otherwise your push rolls it the same way too ("push where you go"). Push too hard and it
+      // runs out from under you.
+      body.applyImpulse({ x: dx * f * SIM.carrier.push, y: 0, z: dz * f * SIM.carrier.push }, true);
+    }
+  }
+
+  /** While you ride a rolling iron ball: it rolls on by itself, and a gentle pull keeps you near its top. */
+  private driveCarrier(dt: number) {
+    const ground = this.ground;
+    if (ground?.role !== 'carrier' || ground.effect?.kind !== 'roll') return;
+    const roll = ground.effect, body = this.bodies[ground.id], v = body.linvel();
+    const along = v.x * roll.dir[0] + v.z * roll.dir[2];
+    const k = Math.max(-SIM.carrier.rollAccel * dt, Math.min(SIM.carrier.rollAccel * dt, roll.speed - along));
+    body.setLinvel({ x: v.x + roll.dir[0] * k, y: v.y, z: v.z + roll.dir[2] * k }, true);
+    const c = body.translation(), p = this.ball.translation(), ox = p.x - c.x, oz = p.z - c.z;
+    if (Math.hypot(ox, oz) < SIM.carrier.settleRange) {
+      const u = this.ball.linvel();
+      this.ball.setLinvel({ x: u.x - ox * SIM.carrier.settle * dt, y: u.y, z: u.z - oz * SIM.carrier.settle * dt }, true);
+    }
+  }
+
+  private boardCarrier(solid: Solid) {
+    const c = this.carriers.get(solid.id);
+    if (!c || c.live) return;
+    c.live = true;
+    const body = this.bodies[solid.id];
+    body.lockTranslations(false, true);
+    body.lockRotations(false, true);
   }
 
   // Boost pads, springs, conveyors and crumbling tiles act on the ball resting on them; wind
@@ -345,6 +475,14 @@ export class Simulation {
     } else if (effect?.kind === 'crumble') {
       const c = this.crumbles.get(ground!.id)!;
       if (c.touchedAt === null && c.goneUntil === null) c.touchedAt = this.time;
+    } else if (effect?.kind === 'hazard' && this.phase !== 'finished' && !this.out) {
+      this.events.push({ type: 'hazard' });
+      if (this.respawnOnFall) this.respawn();
+      else {
+        this.out = true;
+        this.events.push({ type: 'out' });
+      }
+      return;
     }
     this.updateCrumbles();
 
@@ -385,6 +523,19 @@ export class Simulation {
       c.touchedAt = null;
       c.goneUntil = null;
     }
+    for (const id of this.torn) this.setSolidEnabled(id, true); // paper walls are whole again too
+    this.torn.clear();
+    for (const [id, c] of this.carriers) {
+      // Iron balls wait back where they started.
+      const body = this.bodies[id], start = this.level.solids[id].position;
+      body.setTranslation(toVec(start), true);
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+      body.lockTranslations(true, true);
+      body.lockRotations(true, true);
+      c.live = false;
+    }
     this.lastEffect = null;
   }
 
@@ -422,7 +573,8 @@ export class Simulation {
   // Replace the velocity component toward the bumper with a strong push away.
   private kick(bumper: Solid) {
     const p = this.ball.translation();
-    let dx = p.x - bumper.position[0], dz = p.z - bumper.position[2];
+    const at = bumper.motion ? this.bodies[bumper.id].translation() : { x: bumper.position[0], z: bumper.position[2] }; // a sliding bumper: where it is now
+    let dx = p.x - at.x, dz = p.z - at.z;
     const len = Math.hypot(dx, dz) || 1;
     dx /= len; dz /= len;
     const v = this.ball.linvel();

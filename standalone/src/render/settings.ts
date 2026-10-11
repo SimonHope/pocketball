@@ -12,10 +12,17 @@ export interface Settings {
   showHelp: boolean;
   /** Anonymous stats: asked once ('unset' shows the notice). */
   analytics: 'unset' | 'yes' | 'no';
+  /** Motion effects: 'reduced' turns off camera shake, FOV kicks and hit-stop, and halves particles. */
+  effects: 'full' | 'reduced';
 }
 
+const prefersReducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 const KEY = 'hamball.settings';
-const DEFAULTS: Settings = { volume: 0.8, cameraMode: 'dynamic', cameraSensitivity: 1, quality: 'auto', showHelp: true, analytics: 'unset' };
+const DEFAULTS: Settings = {
+  volume: 0.8, cameraMode: 'dynamic', cameraSensitivity: 1, quality: 'auto', showHelp: true, analytics: 'unset',
+  effects: prefersReducedMotion ? 'reduced' : 'full',
+};
 
 export class SettingsStore {
   private value: Settings;
