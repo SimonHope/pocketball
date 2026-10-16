@@ -93,6 +93,7 @@ function puff(dur: number, freq: number, gain: number, q = 0.8) {
 interface Loop { gain: GainNode; filter: BiquadFilterNode }
 let roll: Loop | null = null;
 let wind: Loop | null = null;
+let scrape: Loop | null = null;
 
 function loop(kind: 'white' | 'brown', type: BiquadFilterType): Loop | null {
   const buf = noiseBuffer(kind);
@@ -111,14 +112,15 @@ function loop(kind: 'white' | 'brown', type: BiquadFilterType): Loop | null {
 
 /**
  * The continuous sound of moving, set every frame: a rumble while rolling (brighter and
- * quieter on slippery ice), and wind when flying fast. `active` false fades both out
- * (menus, pause, the finish).
+ * quieter on slippery ice), wind when flying fast, and a hiss of scraped ice while you skid
+ * (`slip`, 0..1). `active` false fades them out (menus, pause, the finish).
  */
-export function motion(speed: number, grounded: boolean, slippery: boolean, active: boolean) {
+export function motion(speed: number, grounded: boolean, slippery: boolean, active: boolean, slip = 0) {
   if (!ctx || !master) return;
   roll ??= loop('brown', 'lowpass');
   wind ??= loop('white', 'bandpass');
-  if (!roll || !wind) return;
+  scrape ??= loop('white', 'highpass');
+  if (!roll || !wind || !scrape) return;
   const t = ctx.currentTime;
   const rolling = active && grounded ? Math.min(1, speed / 20) * (slippery ? 0.05 : 0.11) : 0;
   roll.gain.gain.setTargetAtTime(rolling, t, 0.06);
@@ -126,14 +128,22 @@ export function motion(speed: number, grounded: boolean, slippery: boolean, acti
   const air = active ? Math.min(1, Math.max(0, speed - (grounded ? 14 : 5)) / 20) * (grounded ? 0.025 : 0.07) : 0;
   wind.gain.gain.setTargetAtTime(air, t, 0.1);
   wind.filter.frequency.setTargetAtTime(350 + speed * 35, t, 0.1);
+  scrape.gain.gain.setTargetAtTime(active && grounded ? slip * 0.06 : 0, t, 0.05);
+  scrape.filter.frequency.setTargetAtTime(3000 + speed * 60, t, 0.05);
 }
 
 export const sfx = {
   /** Touching down: a soft thump with a puff of sand, louder for harder landings. */
-  land: (strength: number) => {
+  land: (strength: number, chime = false) => {
     const k = Math.min(1, strength / 20);
     tone({ freq: 120, to: 55, dur: 0.12, type: 'sine', gain: 0.12 + k * 0.12 });
     puff(0.18 + k * 0.12, 900, 0.05 + k * 0.1);
+    if (chime && strength > 10) sfx.chime(k);
+  },
+  /** A soft two-note chime (the night: big landings and springs). */
+  chime: (k = 0.6) => {
+    tone({ freq: 1568, dur: 0.5, type: 'sine', gain: 0.04 * k });
+    tone({ freq: 2349, dur: 0.6, type: 'sine', gain: 0.03 * k, delay: 0.07 });
   },
   /** Back at a checkpoint after a fall. */
   respawn: () => {
@@ -155,7 +165,17 @@ export const sfx = {
     tone({ freq: 180, to: 720, dur: 0.18, type: 'triangle', gain: 0.18 });
     tone({ freq: 720, to: 540, dur: 0.12, type: 'triangle', gain: 0.08, delay: 0.16 });
   },
-  crumble: () => tone({ freq: 140, to: 60, dur: 0.25, type: 'square', gain: 0.06 }),
+  /** A tile giving way: a crunch; thin ice (`brittle`) crackles; a star sticker peels with a soft sparkle. */
+  crumble: (sound: 'crunch' | 'brittle' | 'sparkle' = 'crunch') => {
+    if (sound === 'crunch') return tone({ freq: 140, to: 60, dur: 0.25, type: 'square', gain: 0.06 });
+    if (sound === 'sparkle') {
+      puff(0.18, 3500, 0.05, 1);
+      [1760, 2093, 2637].forEach((f, i) => tone({ freq: f, dur: 0.08, type: 'sine', gain: 0.03, delay: i * 0.05 }));
+      return;
+    }
+    puff(0.1, 5000, 0.08, 2);
+    [2400, 1700, 2900].forEach((f, i) => tone({ freq: f, to: f * 0.6, dur: 0.05, type: 'square', gain: 0.03, delay: i * 0.045 }));
+  },
   /** A log breaking up at the bottom of a slope: a dry crack and a thud. */
   crack: () => {
     puff(0.12, 1800, 0.09, 1.4);

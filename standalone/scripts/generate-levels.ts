@@ -61,6 +61,8 @@ for (const target of TARGETS.filter((t) => !only || t.file === only)) {
       : target.extend ? extendLevel(parseLevel(JSON.parse(readFileSync(`src/levels/bases/${target.file}.json`, 'utf8'))), { ...target, seed, stars: STARS, onSegment, off })
       : generateLevel({ ...target, seed, stars: STARS, onSegment, off });
     if (!raw) continue;
+    // A star spur is the last resort: for the first 350 seeds, look for a layout without one.
+    if (seed < target.firstSeed + 350 && plan.some((p) => p.startsWith('starSpur'))) continue;
     const level = addSafetyWalls(raw); // low walls on every edge you could roll off by accident
     if (target.needs?.some((type) => level.pieces.filter((p) => p.type === type).length < (target.needCount ?? 1))) continue;
     const goal = level.pieces.find((p) => p.type === 'goal');

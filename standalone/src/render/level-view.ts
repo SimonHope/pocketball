@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import type { Vec3 } from '../sim/math';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { GUARD_COLOR, type Palette } from '../levels/schema';
-import { THEMES, type Look, type Surface, type Theme } from '../levels/themes';
-import { scaleBoxUVs, surfaceMaterial, surfaceTexture } from './surfaces';
+import { GUARD_COLOR, PALETTES, type Palette } from '../levels/schema';
+import { gustAt, THEMES, type Look, type Surface, type Theme } from '../levels/themes';
+import { scaleBoxUVs, surfaceEnv, surfaceMaterial, surfaceTexture } from './surfaces';
+import { skyTexture } from './backdrop';
+import { Effects } from './effects';
 import { poseAt, starAt, travelAt, type ResolvedLevel, type Solid, type StarMarker, type Volume } from '../sim/geometry';
 import type { Simulation } from '../sim/simulation';
 
@@ -83,10 +85,22 @@ function checkerTexture(a: string, b: string): THREE.CanvasTexture {
 // uploaded to the GPU once) and only change the repeat.
 const checkerCache = new Map<string, THREE.CanvasTexture>();
 
+/**
+ * Floors of different palettes can overlap at the same height (a pad over the end of a path),
+ * where their tops would flicker as the depth test can't pick one (z-fighting). A fixed nudge
+ * per palette settles it: the later palette in PALETTES always draws on top (grey pads last).
+ */
+function layered<M extends THREE.Material>(material: M, palette: Palette): M {
+  material.polygonOffset = true;
+  material.polygonOffsetFactor = -(PALETTES.indexOf(palette) + 1);
+  material.polygonOffsetUnits = -(PALETTES.indexOf(palette) + 1) * 4;
+  return material;
+}
+
 function floorMaterials(theme: Theme, palette: Palette, size: [number, number, number]): THREE.Material[] {
   if (theme.look) {
     // The geometry carries world-scaled UVs and side shading (see solidMesh).
-    const top = surfaceMaterial(theme.look.floors[palette]);
+    const top = layered(surfaceMaterial(theme.look.floors[palette]), palette);
     const sideMat = surfaceMaterial(theme.look.sides[palette], { vertexColors: true, size: 256 });
     return [sideMat, sideMat, top, sideMat, sideMat, sideMat];
   }
@@ -95,7 +109,7 @@ function floorMaterials(theme: Theme, palette: Palette, size: [number, number, n
   if (!base) checkerCache.set(a + b, (base = checkerTexture(a, b)));
   const tex = base.clone();
   tex.repeat.set(size[0] / 4, size[2] / 4); // one checker tile = 4x4 units
-  const top = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 });
+  const top = layered(new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 }), palette);
   const sideMat = new THREE.MeshStandardMaterial({ color: side, roughness: 0.9 });
   // BoxGeometry face order: +x, -x, +y, -y, +z, -z
   return [sideMat, sideMat, top, sideMat, sideMat, sideMat];
@@ -174,7 +188,7 @@ function mergedStatics(solids: Solid[], theme: Theme): THREE.Mesh[] {
   for (const [palette, { tops, sides }] of floors) {
     if (look) {
       meshes.push(
-        new THREE.Mesh(mergeGeometries(tops), surfaceMaterial(look.floors[palette])),
+        new THREE.Mesh(mergeGeometries(tops), layered(surfaceMaterial(look.floors[palette]), palette)),
         new THREE.Mesh(mergeGeometries(sides), surfaceMaterial(look.sides[palette], { vertexColors: true, size: 256 })),
       );
     } else {
@@ -182,7 +196,7 @@ function mergedStatics(solids: Solid[], theme: Theme): THREE.Mesh[] {
       let base = checkerCache.get(a + b);
       if (!base) checkerCache.set(a + b, (base = checkerTexture(a, b)));
       meshes.push(
-        new THREE.Mesh(mergeGeometries(tops), new THREE.MeshStandardMaterial({ map: base.clone(), roughness: 0.8 })),
+        new THREE.Mesh(mergeGeometries(tops), layered(new THREE.MeshStandardMaterial({ map: base.clone(), roughness: 0.8 }), palette)),
         new THREE.Mesh(mergeGeometries(sides), new THREE.MeshStandardMaterial({ color: side, roughness: 0.9 })),
       );
     }
@@ -252,20 +266,11 @@ const slats = () => canvasTexture(32, 32, (ctx) => {
   ctx.fillRect(12, 14, 8, 4);
 });
 
-/** Streaks for wind (along v) and sparkles for low gravity. */
+/** Streaks for wind (along v). */
 const streaks = () => canvasTexture(64, 64, (ctx) => {
   ctx.clearRect(0, 0, 64, 64);
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   for (const [x, y, h] of [[6, 4, 18], [22, 30, 22], [38, 10, 14], [52, 40, 20], [30, 50, 10]]) ctx.fillRect(x, y, 3, h);
-});
-const sparkles = () => canvasTexture(64, 64, (ctx) => {
-  ctx.clearRect(0, 0, 64, 64);
-  ctx.fillStyle = 'rgba(255,255,255,0.95)';
-  for (const [x, y] of [[8, 10], [40, 6], [24, 30], [54, 34], [12, 52], [44, 54]]) {
-    ctx.beginPath();
-    ctx.arc(x, y, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
 });
 
 /** The textured top face of an effect floor (boost, conveyor): scrolls to show direction. */
@@ -301,10 +306,10 @@ function effectMesh(solid: Solid, look?: Look): THREE.Mesh | null {
     return new THREE.Mesh(geo, scrollingTop(s.size, tex, Math.round(s.size[2] / (look ? 4 : 1.5)), '#2a2d38'));
   }
   if (look) {
-    // A cracker (it crumbles): one per tile.
-    const tex = surfaceTexture(look.crumble).clone();
-    tex.repeat.set(Math.max(1, Math.round(s.size[0] / 4)), Math.max(1, Math.round(s.size[2] / 4)));
-    const top = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85, transparent: true });
+    // A cracker or thin ice (it crumbles): one per tile.
+    const top = surfaceMaterial(look.crumble);
+    top.map!.repeat.set(Math.max(1, Math.round(s.size[0] / 4)), Math.max(1, Math.round(s.size[2] / 4)));
+    top.transparent = true;
     const side = new THREE.MeshStandardMaterial({ color: look.crumble.accent, roughness: 0.9, transparent: true });
     return new THREE.Mesh(geo, [side, side, top, side, side, side]);
   }
@@ -331,15 +336,25 @@ function effectMesh(solid: Solid, look?: Look): THREE.Mesh | null {
 function volumeMesh(v: Volume): THREE.Mesh {
   const size: Vec3 = [v.max[0] - v.min[0], v.max[1] - v.min[1], v.max[2] - v.min[2]];
   const wind = v.kind === 'wind';
-  const tex = wind ? streaks() : sparkles();
+  if (!wind) {
+    // Low gravity: only a faint haze; its stardust (stardustPoints) shows where it is.
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(...size),
+      new THREE.MeshBasicMaterial({ color: '#9f8cff', transparent: true, opacity: 0.04, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    mesh.position.set((v.min[0] + v.max[0]) / 2, (v.min[1] + v.max[1]) / 2, (v.min[2] + v.max[2]) / 2);
+    mesh.renderOrder = 2;
+    return mesh;
+  }
+  const tex = streaks();
   // Box faces: streaks run along the wind; for a sideways wind, the side faces' v axis is y,
   // so rotate the texture to run horizontally.
-  if (wind && Math.abs(v.dir[1]) < 0.5) tex.rotation = Math.PI / 2;
+  if (Math.abs(v.dir[1]) < 0.5) tex.rotation = Math.PI / 2;
   tex.repeat.set(Math.max(1, Math.round(size[0] / 6)), Math.max(1, Math.round(size[1] / 6)));
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(...size),
     new THREE.MeshBasicMaterial({
-      color: wind ? '#dff6ff' : '#c9a7ff', map: tex, transparent: true, opacity: wind ? 0.35 : 0.3,
+      color: '#dff6ff', map: tex, transparent: true, opacity: 0.35,
       depthWrite: false, side: THREE.DoubleSide,
     }),
   );
@@ -348,21 +363,130 @@ function volumeMesh(v: Volume): THREE.Mesh {
   return mesh;
 }
 
-/** A toadstool: a spotted cap on a pale stem, on the bumper's cylinder (same radius and height). */
-function toadstoolMesh(radius: number, height: number, look: Look): THREE.Mesh {
-  const spots = new THREE.CanvasTexture(spotCanvas(look.bumper.cap, look.bumper.spots));
+/** How brightly a night-light's cap glows at rest (it flares when bumped). */
+const GLOW = 0.8;
+
+// ---------- Stardust (low gravity) ----------
+
+const STARDUST_VERTEX = /* glsl */ `
+  attribute vec3 lo;
+  attribute vec3 span;
+  attribute float phase;
+  uniform float time;
+  uniform float pixelsPerUnit;
+  varying float vAlpha;
+  varying vec3 vColor;
+  void main() {
+    // position: where in its volume (0..1 on each axis). Specks rise slowly, wrap at the top,
+    // drift side to side, and twinkle.
+    float rise = 0.5 + 0.7 * fract(phase * 7.31);
+    vec3 q = position;
+    q.y = fract(q.y + time * rise / span.y);
+    q.x = clamp(q.x + sin(time * 0.6 + phase * 6.28) * 0.6 / span.x, 0.0, 1.0);
+    q.z = clamp(q.z + cos(time * 0.5 + phase * 9.1) * 0.6 / span.z, 0.0, 1.0);
+    vec4 mv = modelViewMatrix * vec4(lo + span * q, 1.0);
+    float twinkle = 0.5 + 0.5 * sin(time * (2.0 + 3.0 * fract(phase * 3.7)) + phase * 40.0);
+    vAlpha = smoothstep(0.0, 0.12, q.y) * smoothstep(1.0, 0.85, q.y) * (0.3 + 0.7 * twinkle);
+    vColor = mix(vec3(1.0, 0.93, 0.7), vec3(0.75, 0.85, 1.0), fract(phase * 11.3)); // gold and pale blue
+    float size = 0.2 + 0.35 * fract(phase * 5.9) * (0.6 + 0.4 * twinkle);
+    gl_PointSize = min(28.0, size * pixelsPerUnit / max(0.1, -mv.z)); // specks right by the camera stay specks
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+const STARDUST_FRAGMENT = /* glsl */ `
+  uniform sampler2D map;
+  varying float vAlpha;
+  varying vec3 vColor;
+  void main() {
+    vec4 t = texture2D(map, gl_PointCoord);
+    gl_FragColor = vec4(vColor * t.rgb, t.a * vAlpha);
+    if (gl_FragColor.a < 0.01) discard;
+    #include <colorspace_fragment>
+  }
+`;
+
+/** A speck of stardust: a soft glow with a four-point sparkle through it. */
+let sprite: THREE.CanvasTexture | null = null;
+const stardustSprite = () => (sprite ??= (() => {
+  const tex = canvasTexture(64, 64, (ctx) => {
+    const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    g.addColorStop(0, 'rgba(255,255,255,1)');
+    g.addColorStop(0.25, 'rgba(255,255,255,0.5)');
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2, r = i % 2 ? 4 : 30;
+      ctx.lineTo(32 + Math.cos(a) * r, 32 + Math.sin(a) * r);
+    }
+    ctx.fill();
+  });
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  return tex;
+})());
+
+/**
+ * Every low-gravity zone's stardust in one Points mesh (one draw call): specks rising slowly
+ * through each zone and twinkling, all moved on the GPU by `time`.
+ */
+function stardustPoints(volumes: Volume[]): THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial> | null {
+  const zones = volumes.filter((v) => v.kind === 'lowgrav');
+  if (!zones.length) return null;
+  const pos: number[] = [], lo: number[] = [], span: number[] = [], phase: number[] = [];
+  let seed = 7;
+  const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (const v of zones) {
+    const size: Vec3 = [v.max[0] - v.min[0], v.max[1] - v.min[1], v.max[2] - v.min[2]];
+    const n = Math.round(Math.min(260, Math.max(40, size[0] * size[1] * size[2] * 0.05)));
+    for (let i = 0; i < n; i++) {
+      pos.push(rand(), rand(), rand());
+      lo.push(...v.min);
+      span.push(...size);
+      phase.push(rand());
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('lo', new THREE.Float32BufferAttribute(lo, 3));
+  g.setAttribute('span', new THREE.Float32BufferAttribute(span, 3));
+  g.setAttribute('phase', new THREE.Float32BufferAttribute(phase, 1));
+  const points = new THREE.Points(g, new THREE.ShaderMaterial({
+    uniforms: { time: { value: 0 }, pixelsPerUnit: { value: 600 }, map: { value: stardustSprite() } },
+    vertexShader: STARDUST_VERTEX,
+    fragmentShader: STARDUST_FRAGMENT,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }));
+  points.frustumCulled = false;
+  points.renderOrder = 3;
+  return points;
+}
+
+/**
+ * A toadstool: a spotted cap on a pale stem, on the bumper's cylinder (same radius and height).
+ * With `look.bumper.colours`, each bumper (by `n`) takes the next colour: glowing mushrooms at night.
+ */
+function toadstoolMesh(radius: number, height: number, look: Look, n = 0): THREE.Mesh {
+  const colours = look.bumper.colours;
+  const { cap: capColour, glow } = colours?.length ? colours[n % colours.length] : look.bumper;
+  const spots = new THREE.CanvasTexture(spotCanvas(capColour, look.bumper.spots));
   spots.colorSpace = THREE.SRGBColorSpace;
   spots.wrapS = THREE.RepeatWrapping;
   const stem = new THREE.Mesh(
     new THREE.CylinderGeometry(radius * 0.92, radius, height, 24),
     new THREE.MeshStandardMaterial({ color: look.bumper.stem, roughness: 0.8 }),
   );
+  const capMaterial = new THREE.MeshStandardMaterial({ map: spots, roughness: 0.45, emissive: glow ?? '#3a0a06', emissiveIntensity: glow ? GLOW : 1 });
   const cap = new THREE.Mesh(
     new THREE.SphereGeometry(radius * 1.12, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.55, 1),
-    new THREE.MeshStandardMaterial({ map: spots, roughness: 0.45, emissive: '#3a0a06' }),
+    capMaterial,
   );
   cap.position.y = height / 2 - 0.15;
   stem.add(cap);
+  if (glow) stem.userData.glow = capMaterial; // a night-light: flares when bumped
   return stem;
 }
 
@@ -661,7 +785,7 @@ function solidMesh(solid: Solid, theme: Theme): THREE.Mesh {
   if (s.kind === 'sphere') return new THREE.Mesh(new THREE.SphereGeometry(s.radius, 32, 20), new THREE.MeshStandardMaterial({ color: solid.color ?? '#cccccc', roughness: 0.5 }));
   if (look && solid.role === 'arm' && s.kind === 'box') return pencilMesh(s.size, look);
   if (s.kind === 'cylinder') {
-    if (solid.role === 'bumper') return look ? toadstoolMesh(s.radius, s.height, look) : bumperMesh(s.radius, s.height);
+    if (solid.role === 'bumper') return look ? toadstoolMesh(s.radius, s.height, look, solid.id) : bumperMesh(s.radius, s.height);
     return new THREE.Mesh(
       new THREE.CylinderGeometry(s.radius, s.radius, s.height, 24),
       new THREE.MeshStandardMaterial({ color: solid.color ?? '#cccccc', roughness: 0.7 }),
@@ -701,7 +825,8 @@ export class LevelView {
   private goalArch: THREE.Mesh | null = null;
   private zones: { ring: THREE.Mesh<THREE.RingGeometry, THREE.MeshStandardMaterial>; beam: THREE.Mesh }[] = [];
   /** Textures that scroll to show which way things move: offset change per second (v axis). */
-  private scrolling: { tex: THREE.Texture; rate: number }[] = [];
+  /** `gust`: wind streaks, which scroll faster and show stronger as the world's wind gusts (meadow). */
+  private scrolling: { tex: THREE.Texture; rate: number; gust?: THREE.MeshBasicMaterial }[] = [];
   private crumbles: Solid[] = [];
   private keys: Solid[] = [];
   private rollers: Solid[] = [];
@@ -714,8 +839,12 @@ export class LevelView {
   private wheels: { mesh: THREE.Mesh; axis: THREE.Vector3; speed: number }[] = [];
   private springs = new Map<number, number>(); // spring solid id -> bounce 0..1
   private stars: StarView[] = [];
+  /** Low-gravity zones' stardust. */
+  private stardust: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial> | null = null;
 
   constructor(scene: THREE.Object3D, level: ResolvedLevel, { merge = true } = {}) {
+    const look = THEMES[level.theme].look;
+    surfaceEnv.map = look ? skyTexture(look) : null; // icy surfaces reflect the painted world
     const mergeable = (s: Solid) => merge && !s.motion && !s.effect && s.shape.kind === 'box';
     for (const mesh of mergedStatics(level.solids.filter(mergeable), THEMES[level.theme])) {
       mesh.castShadow = mesh.receiveShadow = true;
@@ -783,10 +912,12 @@ export class LevelView {
       const mesh = volumeMesh(v);
       mesh.userData.piece = v.piece;
       scene.add(mesh);
-      const map = (mesh.material as THREE.MeshBasicMaterial).map!;
-      // Streaks drift with the wind (updrafts rise); sparkles float up slowly.
-      this.scrolling.push({ tex: map, rate: v.kind === 'wind' ? -Math.max(0.6, v.speed / 6) : -0.15 });
+      // Streaks drift with the wind (updrafts rise).
+      const material = mesh.material as THREE.MeshBasicMaterial;
+      if (v.kind === 'wind') this.scrolling.push({ tex: material.map!, rate: -Math.max(0.6, v.speed / 6), gust: material });
     }
+    this.stardust = stardustPoints(level.volumes);
+    if (this.stardust) scene.add(this.stardust);
 
     for (const cp of level.checkpoints) {
       const group = new THREE.Group();
@@ -928,6 +1059,11 @@ export class LevelView {
   }
 
   update(sim: Simulation, dt: number) {
+    if (this.stardust) {
+      const u = this.stardust.material.uniforms;
+      u.time.value += dt;
+      u.pixelsPerUnit.value = Effects.pixelsPerUnit;
+    }
     for (const cp of this.checkpoints) {
       if (cp.pulse <= 0) continue;
       cp.pulse = Math.max(0, cp.pulse - dt * 2.5);
@@ -985,6 +1121,8 @@ export class LevelView {
       const next = Math.max(0, pulse - dt * 4);
       const s = 1 + next * 0.25;
       this.meshes[id].scale.set(s, 1, s);
+      const glow = this.meshes[id].userData.glow as THREE.MeshStandardMaterial | undefined;
+      if (glow) glow.emissiveIntensity = GLOW + next * 2;
       if (next === 0) this.pulses.delete(id);
       else this.pulses.set(id, next);
     }
@@ -1018,7 +1156,11 @@ export class LevelView {
       }
     }
 
-    for (const s of this.scrolling) s.tex.offset.y = (s.tex.offset.y + s.rate * dt) % 1;
+    const gust = gustAt(sim.level.theme, sim.time);
+    for (const s of this.scrolling) {
+      s.tex.offset.y = (s.tex.offset.y + s.rate * (s.gust ? gust : 1) * dt) % 1;
+      if (s.gust) s.gust.opacity = 0.35 * gust; // telegraphs the gust: you can see it swell before it pushes hardest
+    }
     for (const [id, b] of this.springs) {
       const next = Math.max(0, b - dt * 3);
       this.meshes[id].scale.set(1, 1 + Math.sin(next * Math.PI) * 1.5, 1);

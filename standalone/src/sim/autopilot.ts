@@ -7,6 +7,7 @@ import type { Input, Simulation } from './simulation';
 // finished, and (with a style) as the Quick Play bots.
 
 const ARRIVE_RADIUS = 2;
+const ARRIVE_ABOVE = 2;   // ...and no higher above it than this
 const EDGE_MARGIN = 1.3; // keep this much floor beyond the ball's side when taking a lane
 const SIDE_MARGIN = 1.1; // floor needed either side of a lane path
 const CATCH_PATIENCE = 12; // seconds to hold at a `catch` point before giving up on its star
@@ -142,7 +143,9 @@ export class Autopilot {
       if (this.target?.index !== this.index) this.target = { index: this.index, p: this.lanePoint(this.index) };
       const wp = this.target.p;
       const dist = Math.hypot(wp[0] - pos[0], wp[2] - pos[2]);
-      if (dist < ARRIVE_RADIUS && Math.abs(pos[1] - 1 - wp[1]) < 3) {
+      // High above a point (at the top of a hop) isn't there yet: steering on early drifts you off the arc.
+      const above = pos[1] - 1 - wp[1];
+      if (dist < ARRIVE_RADIUS && above > -3 && above < ARRIVE_ABOVE) {
         if (route[this.index].catch && !this.caught()) break; // hold until the riding star comes by
         if (route[this.index].timed && !this.clearAhead()) break; // hold until the way on is clear
         if (route[this.index].ride && !this.carried(route[this.index].p)) break; // not up there yet

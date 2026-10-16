@@ -22,7 +22,7 @@ import { motion as motionSound } from './render/audio';
 import { loadLook, saveLook } from './render/look-store';
 import { renderCustomize } from './ui/customize';
 import { Autopilot } from './sim/autopilot';
-import { initPhysics, type SimEvent } from './sim/simulation';
+import { initPhysics, type Input, type SimEvent } from './sim/simulation';
 import { Screens, type ScreenId } from './ui/screens';
 import { CATALOG, ownedLook, owns, unlockOf, type Category } from './cosmetics';
 import { courseDrop, courseMechanics, levelId, withoutStars } from './levels';
@@ -217,6 +217,7 @@ function restartRace() {
   clearTimeout(resultsTimer);
   testPilot = null;
   s.restart();
+  s.ballView.wake();
   recorder.reset(true);
   if (demo) {
     demo = new Autopilot(s.sim);
@@ -472,7 +473,13 @@ function renderLevelList() {
   list.replaceChildren(...[...groups].flatMap(([theme, cards]) => {
     const heading = document.createElement('h3');
     heading.className = 'level-group';
-    heading.textContent = THEMES[theme as keyof typeof THEMES].label;
+    const { label, tagline } = THEMES[theme as keyof typeof THEMES];
+    heading.textContent = label;
+    // The story is told by the world itself: one line of feeling under its name.
+    const line = document.createElement('span');
+    line.className = 'tagline';
+    line.textContent = tagline;
+    heading.append(line);
     return [heading, ...cards];
   }));
 }
@@ -519,6 +526,33 @@ function levelCard(level: LevelData, i: number): HTMLElement {
   card.append(map, num, name, ...(mechanics.textContent ? [mechanics] : []), bestEl, medalBadge(medalFor(best, level.medals)));
   card.addEventListener('click', () => startLevel(i));
   return card;
+}
+
+/**
+ * The end of the journey (DESIGN.md → The story): the hamster curls up asleep in its ball under
+ * the aurora, and the view drifts up to the stars. No words: it may be an escape, a dream or a
+ * last moment, and players decide. Any key, click or tap skips to the results.
+ */
+const ENDING_MS = 7000;
+function playEnding(then: () => void) {
+  const s = current();
+  s.ballView.sleep();
+  rig.gazeUp();
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    removeEventListener('keydown', finish);
+    removeEventListener('pointerdown', finish);
+    // Still watching it: not restarted (that clears the timer too) or gone back to the menu.
+    if (mode === 'playing' && current() === s && s.sim.phase === 'finished') then();
+  };
+  const timer = resultsTimer = setTimeout(finish, ENDING_MS);
+  setTimeout(() => {
+    addEventListener('keydown', finish);
+    addEventListener('pointerdown', finish);
+  }, 1500); // not a key still held from the finish line
 }
 
 function showResults(time: number, isBest: boolean, newStars: number) {
@@ -704,6 +738,8 @@ function feel(e: SimEvent, s: RaceSession) {
       if (s.sim.grounded) {
         // A landing: dust, a squash, and for big ones a camera dip and a beat of hit-stop.
         fx.burst('dust', under, { strength: e.strength / 20 });
+        const glints = THEMES[s.level.theme].look?.glints;
+        if (glints) fx.burst('glints', under, { strength: e.strength / 20, color: glints });
         ball.squash(Math.min(0.45, e.strength / 40));
         if (player && e.strength > 14) rig.dip(Math.min(0.7, e.strength / 35));
         if (player && e.strength > 18) hitStop(50);
@@ -721,7 +757,7 @@ function feel(e: SimEvent, s: RaceSession) {
     case 'bump': {
       const b = s.sim.solidPose(e.solidId).position; // sliding bumpers: where it is now
       const away: [number, number, number] = [p[0] - b[0], 0, p[2] - b[2]];
-      fx.burst('spark', [p[0] - away[0] * 0.3, p[1], p[2] - away[2] * 0.3], { dir: away, strength: 0.8 });
+      fx.burst('spark', [p[0] - away[0] * 0.3, p[1], p[2] - away[2] * 0.3], { dir: away, strength: 0.8, colors: THEMES[s.level.theme].look?.sprinkles });
       ball.squash(0.3);
       ball.dizzy();
       break;
@@ -733,7 +769,7 @@ function feel(e: SimEvent, s: RaceSession) {
       break;
     case 'crumble': {
       const c = s.level.solids[e.solidId].position;
-      fx.burst('crumbs', [c[0], c[1], c[2]]);
+      fx.burst('crumbs', [c[0], c[1], c[2]], { color: THEMES[s.level.theme].look?.crumbs });
       break;
     }
     case 'hazard':
@@ -824,6 +860,8 @@ function handle(events: SimEvent[]) {
           hud.showBanner('FINISH!', formatTime(e.time), 2000);
           break;
         }
+        // The journey's end: the first finish of the last course plays a quiet beat before the results.
+        const ending = !sandbox && !draft && s.data === LEVELS[LEVELS.length - 1] && bestTime(s.level.name) === null;
         const isBest = !sandbox && recordTime(s.level.name, e.time); // sandbox layouts come and go
         const newStars = draft ? [] : recordStars(s.level.name, s.sim.stars);
         hud.setBest(bestTime(s.level.name));
@@ -835,6 +873,10 @@ function handle(events: SimEvent[]) {
         // Built-in courses: send the run for the server to check (rewards, leaderboard).
         pendingSolo = !draft && account.online ? account.submitSolo(levelId(s.data), s.trace.slice()) : null;
         sfx.finish();
+        if (ending) {
+          playEnding(() => showResults(e.time, isBest, newStars.length));
+          break;
+        }
         sfx.confetti();
         hud.showBanner('FINISH!', formatTime(e.time), 1400);
         resultsTimer = setTimeout(() => showResults(e.time, isBest, newStars.length), 1400);
@@ -856,7 +898,7 @@ function handle(events: SimEvent[]) {
         break;
       case 'impact':
         if (!audible) break;
-        if (s.sim.grounded) sfx.land(e.strength);
+        if (s.sim.grounded) sfx.land(e.strength, THEMES[s.level.theme].look?.chime);
         else sfx.thud(e.strength);
         rig.addShake(e.strength / 40);
         break;
@@ -869,9 +911,13 @@ function handle(events: SimEvent[]) {
         s.levelView.bounceSpring(e.solidId);
         if (!audible) break;
         sfx.spring();
+        if (THEMES[s.level.theme].look?.chime) sfx.chime();
         break;
       case 'crumble':
-        if (audible) sfx.crumble();
+        if (audible) {
+          const kind = THEMES[s.level.theme].look?.crumble.kind;
+          sfx.crumble(kind === 'thinice' ? 'brittle' : kind === 'sticker' ? 'sparkle' : 'crunch');
+        }
         break;
       case 'smash':
         if (audible) sfx.tear();
@@ -881,6 +927,50 @@ function handle(events: SimEvent[]) {
         break;
     }
   }
+}
+
+// ---------- Ice ----------
+let lastInput: Input = { x: 0, z: 0 };
+let shavingsDue = 0, breathDue = 2;
+
+/**
+ * Ice answers the sliding: steering across or against the way you're sliding throws up ice
+ * shavings (and returns how hard, 0..1, for the scrape's hiss), and your breath puffs in the
+ * cold. Only how things look and sound: the sim never sees it.
+ */
+function coldFeel(s: RaceSession, dt: number): number {
+  if (!THEMES[s.level.theme].look?.cold || s.sim.phase !== 'playing') return 0;
+  const p = s.sim.position(), v = s.sim.velocity(), speed = Math.hypot(v[0], v[2]);
+  const push = Math.hypot(lastInput.x, lastInput.z);
+  let slip = 0;
+  if (s.sim.grounded && speed > 4 && push > 0.3) {
+    const along = (lastInput.x * v[0] + lastInput.z * v[2]) / (push * speed); // 1: pushing the way you slide
+    slip = Math.min(1, speed / 14) * Math.min(1, Math.max(0, 0.85 - along) / 1.2);
+  }
+  if (slip > 0.15 && (shavingsDue -= dt) <= 0) {
+    s.effects.burst('shavings', [p[0], p[1] - 0.9, p[2]], { dir: v, strength: slip });
+    shavingsDue = 0.06;
+  }
+  if (Effects.scale >= 1 && (breathDue -= dt) <= 0) { // off on low graphics and with reduced motion
+    const f = speed > 1 ? [v[0] / speed, v[2] / speed] : [0, -1];
+    s.effects.burst('breath', [p[0] + f[0] * 1.15, p[1] + 0.25, p[2] + f[1] * 1.15], { dir: [f[0], 0, f[1]] });
+    breathDue = 1.8 + Math.random() * 0.8;
+  }
+  return slip;
+}
+
+// ---------- Night ----------
+let stardustDue = 0;
+
+/** At night you leave stardust behind you: more the faster you go, and more in the air. */
+function stardust(s: RaceSession, dt: number) {
+  const color = THEMES[s.level.theme].look?.trail;
+  if (!color || s.sim.phase !== 'playing') return;
+  const v = s.sim.velocity(), speed = Math.hypot(v[0], v[1], v[2]);
+  const rate = Math.max(0, speed - 6) / 10 * (s.sim.grounded ? 1 : 2.5); // bursts a frame
+  if (rate <= 0 || (stardustDue -= dt) > 0) return;
+  s.effects.burst('stardust', s.sim.position(), { dir: v, strength: Math.min(1.5, rate), color });
+  stardustDue = 0.05;
 }
 
 // ---------- Loop: fixed-step simulation, interpolated rendering ----------
@@ -919,7 +1009,9 @@ function frame(now: number) {
     let steps = 0;
     while (accumulator >= SIM.dt && steps < MAX_STEPS) {
       if (mode === 'mp') mp.beforeStep(s.sim);
-      s.step(demo ? demo.input() : testPilot ? testPilot.input() : mode === 'mp' ? mp.input(controls.move()) : controls.move());
+      const input = demo ? demo.input() : testPilot ? testPilot.input() : mode === 'mp' ? mp.input(controls.move()) : controls.move();
+      s.step(input);
+      lastInput = input;
       if (!demo && mode === 'playing') recorder.step(s.sim);
       handle(s.sim.drainEvents());
       accumulator -= SIM.dt;
@@ -962,7 +1054,9 @@ function frame(now: number) {
   // The sound of moving, and particle sizing for this frame's view.
   const v = s.sim.velocity();
   const racing = !demo && s.sim.phase === 'playing' && (mode === 'playing' || mode === 'mp');
-  motionSound(Math.hypot(v[0], v[2]), s.sim.grounded, THEMES[s.level.theme].grip < 1, racing);
+  const slip = running ? coldFeel(s, frameDt) : 0;
+  if (running) stardust(s, frameDt);
+  motionSound(Math.hypot(v[0], v[2]), s.sim.grounded, THEMES[s.level.theme].grip < 1, racing, slip);
   Effects.pixelsPerUnit = renderer.domElement.height / (2 * Math.tan((camera.fov * Math.PI) / 360));
   renderer.render(scene, camera);
   requestAnimationFrame(frame);

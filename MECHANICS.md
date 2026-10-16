@@ -18,6 +18,7 @@ For why the game is designed this way, see `DESIGN.md`. For the level file forma
   - Switching off `starSpur` (or the `spur` star) removes the fallback star, so some courses may need more seeds to find their 3 stars.
 - **Adjust a mechanic:** the **Gets harder with `d`** column says what difficulty (0 = gentle, 1 = hardest) changes. The numbers live in that segment's builder in `standalone/src/levels/generator.ts` (`SEGMENTS`), mostly as `mix(gentle, hardest, d)`. Physics values for pieces live in `SIM` in `standalone/src/config.ts`, or on the pieces themselves. Regenerate afterwards; the bots re-check every course.
 - **Choose where a mechanic appears:** each course's mix (`weights`) and its acts (opening, twist, finale) are in `standalone/scripts/targets.ts`.
+- **Choose a course's risk/reward piece:** `acts.risk` in `scripts/targets.ts` (one of `fork`, `split`, `paperWall`, `brakePad`) opens its twist. Spread them so neighbouring courses differ; forks lead about a third of the courses. The risk piece hides a star early only on courses whose own mechanics offer fewer than three kinds of star.
 - **Remove a mechanic:** switch it off here first and regenerate. Delete its code only when nothing needs it any more.
 - **Add a mechanic:** follow [Adding a new mechanic](#adding-a-new-mechanic) below.
 - **Try a mechanic on its own:** run `npm run dev` and open `localhost:5173/?sandbox=<segment>`, for example `?sandbox=keys&d=0.5&star`.
@@ -49,7 +50,20 @@ Each mechanic asks the player to do one main thing. Before adding a new one, fin
 
 **Thin spots worth filling:** anything to do with other players outside the party modes, and power-ups. The October 2026 batch filled stopping exactly (`brakePad`), floors that change or turn (`keys`, `turntable`, `rocker`) and moving bumpers (`pinball`). "Time a pass" is now the most crowded row: a new idea there needs a clearly different shape.
 
-**Not in any course yet:** `brakePad`, `pinball`, `keys`, `turntable`, `pendulum`, `rocker`, `rollers`, `paperWall`, `ironBall`, `wheel`, `trickGates` and `logSlope`. Play them in the sandbox first, then add them to courses in `scripts/targets.ts`.
+**Where the new mechanics are:** each leads a course (its intro and finale) and most come back in other courses' mixes. Rolling Hills, Polar Plunge, Avalanche and Midnight Maze swapped their repeated signature for one (rollers, keys, logSlope, trickGates). Eight courses were added around them, two per theme: Toadstool Ring and Conker Lane (meadow), Lazy Susan and Paper Chase (candy), Ice Floes and Brake Point (ice), Toy Box and Iron Comet (night). A signature has weight 1 in a course's build-up and shares its finale with a partner, so it shows up three to five times, not every other section.
+
+## World rules
+
+Each world has one physics rule that serves its feeling (`DESIGN.md` → Worlds). It's set on the theme in `standalone/src/levels/themes.ts`, so every course in that world shares it, and the generator and bots plan with it. Changing one changes every course in the world: run `npm run gen-levels` afterwards.
+
+| World | Rule | Field | Value | Applied in |
+|---|---|---|---|---|
+| Meadow | Gusts: wind swells and eases on the clock, like a fan turning | `gust` | strength 0.55× → 1× and back every 4 s | `simulation.ts` wind volumes, via `gustAt()` |
+| Candy | Bounce: springy floors, so landings hop | `bounce` | floor restitution 0.5 (normally `SIM.restitution`, 0.15) | `simulation.ts`, floors and platforms |
+| Ice | Grip: slippery floors | `grip` | 0.3× friction | `simulation.ts`, floors and platforms |
+| Night | Lighter gravity: everything floats a little | `gravity` | 0.85× | `simulation.ts` (the world, low-gravity boxes); `generator.ts` arcs, via `gravityOf()` |
+
+Course character (which mechanics lead) comes from each world's mixes in `scripts/targets.ts`. Ice courses also take three hard sections between breathers (`hardRun: 3`) instead of two.
 
 ## Pieces
 
@@ -90,56 +104,56 @@ Each segment is a stretch of course built from pieces, with its own bot route. *
 
 | Segment | On | Kind | What the player does | Gets harder with `d` | Star | Courses |
 |---|---|---|---|---|---|---|
-| `straight` | on | breather | Rolls down a railed straight | — | — | Warm-Up, Sweeper Alley, Candy Hop, Frosty Slide, Glacier Run, Moonlit Path |
-| `slalom` | on | hard | Weaves between bumpers | 2 bumpers, then 3 | — | Warm-Up, Switchback Ridge, Candy Hop, Gumdrop Gauntlet, Polar Plunge |
-| `rampDown` | on | breather | Rolls down a ramp | — | — | Zig-Zag, Frosty Slide, Glacier Run, Polar Plunge, Avalanche |
+| `straight` | on | breather | Rolls down a railed straight | — | — | Warm-Up, Sweeper Alley, Toadstool Ring, Candy Hop, Lazy Susan, Frosty Slide, Glacier Run, Ice Floes, Moonlit Path, Toy Box |
+| `slalom` | on | hard | Weaves between bumpers | 2 bumpers, then 3 | — | Warm-Up, Toadstool Ring, Switchback Ridge, Candy Hop, Gumdrop Gauntlet |
+| `rampDown` | on | breather | Rolls down a ramp | — | — | Zig-Zag, Frosty Slide, Glacier Run, Polar Plunge, Ice Floes, Brake Point |
 | `rampUp` | on | breather | Climbs a ramp onto a landing | — | — | — |
-| `turn` | on | breather | Turns 90° on a pad (with a checkpoint) | — | — | Warm-Up, Zig-Zag, Sweeper Alley, Candy Hop, Gumdrop Gauntlet, Sugar Rush, Frosty Slide, Glacier Run, Polar Plunge, Moonlit Path, Starlight Circuit, Midnight Maze |
-| `curve` | on | breather | Takes a smooth railed curve | — | — | Warm-Up, Zig-Zag, Rolling Hills, Switchback Ridge, Summit Run, Taffy Twist, Lollipop Leap, Sugar Mountain, Avalanche, Crystal Caverns, Frozen Falls, Comet Jump, Nebula Spiral |
+| `turn` | on | breather | Turns 90° on a pad (with a checkpoint) | — | — | Warm-Up, Zig-Zag, Sweeper Alley, Toadstool Ring, Conker Lane, Candy Hop, Gumdrop Gauntlet, Sugar Rush, Lazy Susan, Frosty Slide, Glacier Run, Polar Plunge, Ice Floes, Brake Point, Moonlit Path, Starlight Circuit, Midnight Maze, Toy Box |
+| `curve` | on | breather | Takes a smooth railed curve | — | — | Warm-Up, Zig-Zag, Toadstool Ring, Rolling Hills, Switchback Ridge, Conker Lane, Summit Run, Taffy Twist, Lollipop Leap, Paper Chase, Sugar Mountain, Avalanche, Crystal Caverns, Frozen Falls, Moonlit Path, Starlight Circuit, Midnight Maze, Toy Box, Comet Jump, Nebula Spiral, Iron Comet |
 | `hairpin` | on | breather | Takes a descending switchback | — | `noBrake` | Switchback Ridge, Summit Run, Avalanche, Frozen Falls, Nebula Spiral, Starfall Peak |
 | `steep` | on | breather | Plunges down a steep railed slope | — | `noBrake` | Summit Run, Sugar Mountain, Frozen Falls, Starfall Peak |
 | `spiral` | on | breather | Rides a corkscrew down under its own start | — | `noBrake` | Summit Run, Sugar Mountain, Nebula Spiral, Starfall Peak |
 | `drop` | on | hard | Rolls off a cliff onto a walled pad below | — | `fall` | Summit Run, Sugar Mountain, Polar Plunge, Frozen Falls, Starfall Peak |
 | `cascade` | on | breather | Drops down wide waterfall steps | — | `noBrake` | Summit Run, Sugar Mountain, Frozen Falls, Starfall Peak |
 | `stairs` | on | breather | Rolls down steps | — | — | Rolling Hills, Lollipop Leap, Avalanche, Crystal Caverns |
-| `bridge` | on | hard | Crosses a narrow bridge | Width 5.5 → the course's narrowest; tightrope beam 3 → 2.5 | `tightrope` | Zig-Zag, Moonlit Path, Starlight Circuit, Midnight Maze, Comet Jump, Nebula Spiral |
+| `bridge` | on | hard | Crosses a narrow bridge | Width 5.5 → the course's narrowest; tightrope beam 3 → 2.5 | `tightrope` | Zig-Zag, Conker Lane, Moonlit Path, Starlight Circuit, Comet Jump, Nebula Spiral, Iron Comet |
 | `zigzag` | on | hard | Crosses a narrow bridge that zig-zags | Width 6 → 5 | `corner` | Zig-Zag, Candy Hop, Sugar Rush, Midnight Maze |
-| `split` | on | hard | Picks one of two lanes around a hole | Lanes 5 → 4 wide; star lane 3.5 → 3 | `lane` | Rolling Hills, Switchback Ridge, Taffy Twist, Crystal Caverns |
+| `split` | on | hard | Picks one of two lanes around a hole | Lanes 5 → 4 wide; star lane 3.5 → 3 | `lane` | Zig-Zag, Rolling Hills, Switchback Ridge, Gumdrop Gauntlet, Lazy Susan, Taffy Twist, Frosty Slide, Ice Floes, Crystal Caverns, Brake Point, Starlight Circuit, Comet Jump, Starfall Peak |
 | `jump` | on | hard | Jumps a gap off a kicker | Gap 4 → 6 | `edge` | Lollipop Leap |
 | `boostJump` | on | hard | Boosts off a kicker over a long gap | Gap 12 → 15 | `edge` | Summit Run, Sugar Rush, Sugar Mountain, Comet Jump |
-| `moonJump` | on | hard | Floats over a huge gap in low gravity | Gap 16 → 22; star swerve 2.5 → 3.5 | `moon` | Moonlit Path, Comet Jump, Starfall Peak |
-| `springUp` | on | hard | Bounces off a spring onto a ledge | Ledge 3 → 5 high; super spring power 21 → 24 | `super` | Warm-Up, Rolling Hills, Candy Hop, Lollipop Leap, Sugar Mountain |
-| `boostRamp` | on | breather | Boosts up a climb | — | `crest` | Warm-Up, Rolling Hills, Sugar Rush, Frosty Slide, Starlight Circuit |
-| `updraft` | on | hard | Rides a column of rising air onto a ledge | — | `column` | Crystal Caverns, Nebula Spiral |
-| `mover` | on | hard | Rides a platform across a gap | Gap 10 → 16 | `firstRide` | Starlight Circuit |
-| `sideMover` | on | hard | Crosses on a platform sliding sideways | Period 9 → 7.5 s | — | Gumdrop Gauntlet |
-| `lift` | on | hard | Rides a lift up to a tower | — | `elevator` | Switchback Ridge, Lollipop Leap, Glacier Run, Crystal Caverns, Starlight Circuit |
+| `moonJump` | on | hard | Floats over a huge gap in low gravity | Gap 16 → 22; star swerve 2.5 → 3.5 | `moon` | Moonlit Path, Comet Jump, Iron Comet, Starfall Peak |
+| `springUp` | on | hard | Bounces off a spring onto a ledge | Ledge 3 → 5 high; super spring power 21 → 24 | `super` | Warm-Up, Rolling Hills, Candy Hop, Gumdrop Gauntlet, Sugar Rush, Taffy Twist, Lollipop Leap, Sugar Mountain |
+| `boostRamp` | on | breather | Boosts up a climb | — | `crest` | Warm-Up, Sugar Rush, Paper Chase, Frosty Slide, Starlight Circuit |
+| `updraft` | on | hard | Rides a column of rising air onto a ledge | — | `column` | Conker Lane, Crystal Caverns, Comet Jump, Nebula Spiral |
+| `mover` | on | hard | Rides a platform across a gap, or skips the wait on two springs at the side | Gap 10 → 16 | `firstRide` | Starlight Circuit |
+| `sideMover` | on | hard | Crosses on a platform sliding sideways, or a spring throws you over | Period 9 → 7.5 s | — | Gumdrop Gauntlet |
+| `lift` | on | hard | Rides a lift up to a tower, or skips the wait on two springs beside the shaft | — | `elevator` | Switchback Ridge, Lollipop Leap, Glacier Run, Crystal Caverns, Starlight Circuit, Iron Comet |
 | `sweeper` | on | hard | Crosses an arena with a spinning arm | Arm 0.8 → 1.3 rad/s | `tip` | Sweeper Alley, Gumdrop Gauntlet, Sugar Rush |
-| `gauntlet` | on | hard | Runs a wall-less path past two arms | Arms 0.5 → 0.8 rad/s | `gap` | Sweeper Alley, Taffy Twist, Comet Jump |
-| `crumbleBridge` | on | hard | Crosses tiles that fall behind you | 3 → 5 tiles, width 6 → 5, they fall after 0.7 → 0.45 s | `detour` | Sweeper Alley, Gumdrop Gauntlet, Glacier Run, Polar Plunge, Midnight Maze |
-| `conveyor` | on | breather | Is carried along by a belt | — | `fastLane` | Sweeper Alley, Sugar Rush, Taffy Twist |
+| `gauntlet` | on | hard | Runs a wall-less path past two arms | Arms 0.5 → 0.8 rad/s | `gap` | Sweeper Alley |
+| `crumbleBridge` | on | hard | Crosses tiles that fall behind you | 3 → 5 tiles, width 6 → 5, they fall after 0.7 → 0.45 s | `detour` | Sweeper Alley, Gumdrop Gauntlet, Frosty Slide, Glacier Run, Polar Plunge, Ice Floes, Crystal Caverns, Midnight Maze |
+| `conveyor` | on | breather | Is carried along by a belt | — | `fastLane` | Sweeper Alley, Sugar Rush, Lazy Susan, Taffy Twist |
 | `treadmill` | on | hard | Climbs a belt running down at you | Belt 5 → 7 | — | Taffy Twist |
-| `windBridge` | on | hard | Crosses a narrow bridge in a crosswind | Width 6 → narrowest (at least 4.5), wind 6 → 10 | `downwind` | Zig-Zag, Avalanche, Frozen Falls, Midnight Maze |
-| `fork` | on | risk | Takes a railed detour, or a wall-less shortcut half as long | Beam 3.5 → 3 wide; tiles 4.5 → 4 | `shortcut` or `race` | every paced course (its twist) |
-| `starSpur` | on | risk | Detours down a dead-end plank for a star | — | `spur` | every course with stars (fallback) |
+| `windBridge` | on | hard | Crosses a narrow bridge in a crosswind | Width 6 → narrowest (at least 4.5), wind 6 → 10 | `downwind` | Zig-Zag, Toadstool Ring, Rolling Hills, Summit Run, Frosty Slide, Glacier Run, Polar Plunge, Avalanche, Brake Point, Frozen Falls, Midnight Maze |
+| `fork` | on | risk | Takes a railed detour, or a wall-less shortcut half as long: a beam, crumbling tiles, stepping stones, piano keys in a wave, or a beam with toadstools sliding across | Beam 3.5 → 3 wide; tiles 4.5 → 4; stones 3.5 → 3; keys and toadstools faster | `shortcut` or `race` | Warm-Up, Toadstool Ring, Conker Lane, Candy Hop, Taffy Twist, Paper Chase, Glacier Run, Avalanche, Moonlit Path, Toy Box, Iron Comet |
+| `starSpur` | on | risk | Side trip for a star: a dead-end plank, a perch a spring throws you onto, or stepping stones | — | `spur` | every course with stars (fallback) |
 | `sweeperBelt` | on | combo | Rides a belt under a sweeping arm | Belt 8 → 10, arm 0.9 → 1.4 rad/s | — | Sweeper Alley, Sugar Rush, Taffy Twist |
 | `windCrumble` | on | combo | Crosses crumbling tiles in a crosswind | Wind 5 → 8 | `detour` | Zig-Zag, Gumdrop Gauntlet, Glacier Run, Avalanche, Frozen Falls, Midnight Maze |
 | `boostSpring` | on | combo | Springs onto a ledge, then boosts up a climb | As `springUp` and `boostRamp` | `super`, `crest` | Warm-Up, Rolling Hills, Candy Hop, Lollipop Leap, Sugar Mountain, Starlight Circuit |
 | `liftWind` | on | combo | Rides a lift, then crosses a windy bridge | As `lift` and `windBridge` | `elevator`, `downwind` | Switchback Ridge, Lollipop Leap, Glacier Run, Crystal Caverns, Starlight Circuit, Nebula Spiral |
 | `bumperTreadmill` | on | combo | Climbs a down-belt between bumpers | Belt 4 → 6; 2 bumpers, then 3 | — | Taffy Twist |
 | `crumbleJump` | on | combo | Runs up crumbling tiles into a jump | Gap 4 → 6 | `edge` | Summit Run, Gumdrop Gauntlet, Frosty Slide, Polar Plunge, Moonlit Path, Comet Jump, Starfall Peak |
-| `brakePad` | on | hard | Brakes down a steep slope onto a small open pad, then turns off it | Drop 4 → 6; pad 9 → 6.5 wide | `lip` | — |
-| `pinball` | on | hard | Slips past rows of toadstools sliding across a lane | 2 rows, then 3; slide 4 → 2.8 s; no walls from 0.6 | `pocket` | — |
-| `keys` | on | hard | Keeps pace with piano keys sinking and rising in a wave | 4 → 6 keys; beat 5.2 → 4.2 s; time up 38% → 32%; the wave runs at about 6.5 units/s | `beat` | — |
-| `turntable` | on | hard | Rolls onto a turning disc through a gap in its rim, and off when a gap lines up with the way out | Radius 8.5 → 7; 0.5 → 0.8 rad/s | `rim` | — |
-| `pendulum` | on | hard | Times a pass under conkers swinging across a bridge | 1 swing, then 2; period 3.4 → 2.8 s; bridge 5 → 4 | `arc` | — |
-| `rocker` | on | hard | Crosses a ruler tipping from side to side | Tilt 6° → 12°; period 5 → 3.5 s; 5 → 4 wide | `tilt` | — |
-| `rollers` | on | hard | Crosses rows of logs rolling across the way, with no walls | 2 rows, then 3; logs 7 → 12 units/s | `pinch` | — |
-| `paperWall` | on | risk | Weaves through the gaps in paper walls, or boosts and tears straight through | Tears at 14 → 18 units/s | `smash` | — |
-| `ironBall` | on | hard | Rolls onto a giant iron ball at the end of the start pad. It rolls on across a pit of spikes by itself; push sideways to steer it, and keep your balance on top | Field 18 → 26 long; it rolls 2.5 → 4 units/s | `steer` | — |
-| `wheel` | on | hard | Rides a Ferris wheel's step up to a high ledge | Radius 6 → 8 (a higher climb); 6 steps, then 5 | `climb` | — |
-| `trickGates` | on | hard | Picks the one open door in a row, all of them switching at once | 2 doors, then 3; 1 row, then 2; open 1.8 → 1.2 s | `peek` | — |
-| `logSlope` | on | hard | Climbs a slope while logs roll down at it from launchers at the top (a lamp flashes before each one), waiting in side bays | 2 lanes, then 3; logs 7 → 9 units/s; pause between logs 2.2 → 1.4 s; steeper | `dodge` | — |
+| `brakePad` | on | hard | Brakes down a steep slope onto a small open pad, then turns off it | Drop 4 → 6; pad 9 → 6.5 wide | `lip` | Switchback Ridge, Summit Run, Lollipop Leap, Sugar Mountain, Ice Floes, Brake Point, Frozen Falls, Nebula Spiral |
+| `pinball` | on | hard | Slips past rows of toadstools sliding across a lane | 2 rows, then 3; slide 4 → 2.8 s; no walls from 0.6 | `pocket` | Toadstool Ring, Lazy Susan, Paper Chase |
+| `keys` | on | hard | Keeps pace with piano keys sinking and rising in a wave | 4 → 6 keys; beat 5.2 → 4.2 s; time up 38% → 32%; the wave runs at about 6.5 units/s | `beat` | Lazy Susan, Polar Plunge, Ice Floes, Toy Box |
+| `turntable` | on | hard | Rolls onto a turning disc through a gap in its rim, and off when a gap lines up with the way out | Radius 8.5 → 7; 0.5 → 0.8 rad/s | `rim` | Lazy Susan, Paper Chase |
+| `pendulum` | on | hard | Times a pass under conkers swinging across a bridge | 1 swing, then 2; period 3.4 → 2.8 s; bridge 5 → 4 | `arc` | Conker Lane, Brake Point |
+| `rocker` | on | hard | Crosses a ruler tipping from side to side | Tilt 6° → 12°; period 5 → 3.5 s; 5 → 4 wide | `tilt` | Ice Floes, Brake Point, Toy Box |
+| `rollers` | on | hard | Crosses rows of logs rolling across the way, with no walls | 2 rows, then 3; logs 7 → 12 units/s | `pinch` | Toadstool Ring, Rolling Hills, Conker Lane |
+| `paperWall` | on | risk | Weaves through the gaps in paper walls, or boosts and tears straight through | Tears at 14 → 18 units/s | `smash` | Sweeper Alley, Sugar Rush, Lazy Susan, Paper Chase, Polar Plunge, Crystal Caverns, Midnight Maze |
+| `ironBall` | on | hard | Rolls onto a giant iron ball at the end of the start pad. It rolls on across a pit of spikes by itself; push sideways to steer it, and keep your balance on top | Field 18 → 26 long; it rolls 2.5 → 4 units/s | `steer` | Iron Comet |
+| `wheel` | on | hard | Rides a Ferris wheel's step up to a high ledge, or three springs up beside it | Radius 6 → 8 (a higher climb); 6 steps, then 5 | `climb` | Toy Box |
+| `trickGates` | on | hard | Picks the one open door in a row, all of them switching at once | 2 doors, then 3; 1 row, then 2; open 1.8 → 1.2 s | `peek` | Conker Lane, Midnight Maze, Iron Comet |
+| `logSlope` | on | hard | Climbs a slope while logs roll down at it from launchers at the top (a lamp flashes before each one), waiting in side bays | 2 lanes, then 3; logs 7 → 9 units/s; pause between logs 2.2 → 1.4 s; steeper | `dodge` | Avalanche |
 
 ## Star challenges
 
@@ -181,7 +195,7 @@ Each star asks for something more than the safe line does. A course never uses t
 | `climb` | on | switch | `wheel` | Press the button on the start pad, then board the very next step |
 | `peek` | on | static | `trickGates` | Go through the narrow side door, which opens half as often |
 | `dodge` | on | static | `logSlope` | Dodge into the next lane, just above the second bay |
-| `spur` | on | static | `starSpur` | Detour down a dead-end plank (used only when nothing else offered a star) |
+| `spur` | on | static | `starSpur` | A side trip off the course: a dead-end plank, a spring onto a perch, or stepping stones (used only when nothing else offered a star) |
 
 Treadmills, `sweeperBelt`, `bumperTreadmill`, `slalom` and `sideMover` offer no star yet. A bot can't reliably collect one there (a slowed ball can't recover on a down-belt, and you can't stop on a moving belt). Those are open slots for a new star kind.
 

@@ -1,6 +1,6 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { SIM } from '../config';
-import { THEMES } from '../levels/themes';
+import { THEMES, gravityOf, gustAt } from '../levels/themes';
 import { pointVelocity, poseAt, starAt, type ResolvedLevel, type Solid } from './geometry';
 import type { Quat, Vec3 } from './math';
 
@@ -102,7 +102,7 @@ export class Simulation {
   constructor(level: ResolvedLevel) {
     this.level = level;
     this.spawn = { position: level.start.position, yaw: level.start.yaw };
-    this.world = new RAPIER.World(toVec([0, -SIM.gravity, 0]));
+    this.world = new RAPIER.World(toVec([0, -gravityOf(level.theme), 0]));
     this.world.timestep = SIM.dt;
 
     for (const solid of level.solids) {
@@ -120,7 +120,8 @@ export class Simulation {
         : RAPIER.ColliderDesc.cylinder(s.height / 2, s.radius))
         .setFriction(solid.role === 'floor' || solid.role === 'platform' || carrier ? SIM.friction * THEMES[level.theme].grip : SIM.wallFriction)
         .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min)
-        .setRestitution(solid.role === 'bumper' ? SIM.bumperRestitution : SIM.restitution);
+        .setRestitution(solid.role === 'bumper' ? SIM.bumperRestitution
+          : solid.role === 'floor' || solid.role === 'platform' ? THEMES[level.theme].bounce ?? SIM.restitution : SIM.restitution);
       if (solid.role === 'bumper' || solid.effect?.kind === 'breakable') colliderDesc.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
       const collider = this.world.createCollider(colliderDesc, body);
       this.bodies[solid.id] = body;
@@ -491,11 +492,11 @@ export class Simulation {
       if (p.x < vol.min[0] || p.x > vol.max[0] || p.y < vol.min[1] || p.y > vol.max[1] || p.z < vol.min[2] || p.z > vol.max[2]) continue;
       const u = this.ball.linvel();
       if (vol.kind === 'lowgrav') {
-        this.ball.setLinvel({ x: u.x, y: u.y + SIM.gravity * (1 - vol.scale) * dt, z: u.z }, true);
+        this.ball.setLinvel({ x: u.x, y: u.y + gravityOf(this.level.theme) * (1 - vol.scale) * dt, z: u.z }, true);
       } else {
         const along = u.x * vol.dir[0] + u.y * vol.dir[1] + u.z * vol.dir[2];
         if (along >= vol.speed) continue;
-        const k = Math.min(vol.strength * dt, vol.speed - along);
+        const k = Math.min(vol.strength * gustAt(this.level.theme, this.time) * dt, vol.speed - along);
         this.ball.setLinvel({ x: u.x + vol.dir[0] * k, y: u.y + vol.dir[1] * k, z: u.z + vol.dir[2] * k }, true);
       }
     }

@@ -108,15 +108,17 @@ async function race(level: LevelData, style: PilotStyle = {}, { wait = 0 } = {})
     for (let t = 0; t < wait; t += 1 / 120) sim.step({ x: 0, z: 0 }); // set off later (moving pieces elsewhere in their cycle)
     sim.drainEvents();
     const pilot = new Autopilot(sim, 16, style);
-    let falls = 0;
+    let falls = 0, springs = 0;
     // The run as the server sees it: 20 updates a second, from GO.
     const updates: { t: number; p: [number, number, number]; v: [number, number, number] }[] = [{ t: -20, p: sim.position(), v: sim.velocity() }];
     for (let step = 1; step <= 300 * 120 && sim.phase !== 'finished'; step++) {
       sim.step(pilot.input());
-      falls += sim.drainEvents().filter((e) => e.type === 'fall').length;
+      const events = sim.drainEvents();
+      falls += events.filter((e) => e.type === 'fall').length;
+      springs += events.filter((e) => e.type === 'spring').length;
       if (step % 6 === 0) updates.push({ t: (wait + step * SIM.dt) * 1000, p: sim.position(), v: sim.velocity() });
     }
-    return { finished: sim.phase === 'finished', time: sim.elapsed, falls, stars: sim.stars.filter(Boolean).length, waypoint: pilot.index, updates };
+    return { finished: sim.phase === 'finished', time: sim.elapsed, falls, stars: sim.stars.filter(Boolean).length, waypoint: pilot.index, springs, updates };
   } finally {
     sim.dispose();
   }
@@ -178,7 +180,7 @@ describe('moving-floor segments', () => {
     let built = 0;
     for (let seed = 1; seed < 30 && built < 3; seed++) {
       const used: Segment[] = [];
-      const raw = generateLevel({ seed, name: seg, theme: 'meadow', length: 3, difficulty: d, weights: { [seg]: 3, straight: 1 }, onSegment: (s) => used.push(s) });
+      const raw = generateLevel({ seed, name: seg, theme: 'meadow', length: 3, stars: 1, difficulty: d, weights: { [seg]: 3, straight: 1 }, onSegment: (s) => used.push(s) });
       if (!raw || !used.includes(seg)) continue;
       built++;
       const level = addSafetyWalls(raw), resolved = resolveLevel(level);
@@ -192,6 +194,63 @@ describe('moving-floor segments', () => {
     }
     expect(built).toBe(3);
     expect(problems).toEqual([]);
+  });
+});
+
+describe('fork and spur variants', () => {
+  // Forks open the twist on some courses, and spurs are the stars' last resort; each comes in
+  // several shapes so courses don't all share one. Every shape is finished cleanly by the careful
+  // bot, and the star route collects its star.
+  const forkLine = (l: LevelData) => l.pieces.some((p) => p.type === 'mover' && p.hold) ? 'keys'
+    : l.pieces.some((p) => p.type === 'bumper' && p.to) ? 'toadstools'
+    : l.pieces.some((p) => p.type === 'crumble' && p.open) ? 'tiles'
+    : l.pieces.some((p) => p.type === 'pad' && p.open) ? 'stones' : 'beam';
+  const spurKind = (l: LevelData) => l.pieces.some((p) => p.type === 'spring') ? 'perch'
+    : l.pieces.some((p) => p.type === 'pad' && p.open) ? 'stones' : 'plank';
+  const cases = [
+    ...['beam', 'tiles', 'stones', 'keys', 'toadstools'].map((v) => ['fork', v] as const),
+    ...['plank', 'perch', 'stones'].map((v) => ['starSpur', v] as const),
+  ];
+  it.each(cases)('%s: %s', async (seg, variant) => {
+    await initPhysics(); // addSafetyWalls asks the physics world about edges
+    const shape = seg === 'fork' ? forkLine : spurKind;
+    let result = 'not built';
+    for (let seed = 1; seed < 200 && result !== 'ok'; seed++) {
+      const raw = generateLevel({ seed, name: seg, theme: 'meadow', length: 3, stars: 1, weights: { [seg]: 3, straight: 1 } });
+      if (!raw || shape(raw) !== variant || !raw.pieces.some((p) => p.type === 'star')) continue;
+      const level = addSafetyWalls(raw);
+      for (const p of level.pieces) if (p.type === 'star' && p.button) p.time = 60;
+      const risky = await race(level, { route: 'stars' }), safe = await race(level);
+      result = risky.finished && !risky.falls && risky.stars === 1 && safe.finished && !safe.falls ? 'ok'
+        : `seed ${seed}: risky finished=${risky.finished} falls=${risky.falls} stars=${risky.stars}; safe finished=${safe.finished} falls=${safe.falls}`;
+    }
+    expect(result).toBe('ok');
+  });
+});
+
+describe('wait shortcuts', () => {
+  // Where you wait for a moving floor (a lift, the wheel, a sliding platform), springs in a row
+  // beside it are a risky way past. The careful bot waits; the star route takes the springs,
+  // lands every hop and gets there sooner, and the server accepts the run.
+  const hops = (seg: string) => ({ lift: 2, wheel: 3, mover: 2, sideMover: 1 })[seg] ?? 0;
+  const cases = (['lift', 'wheel', 'mover', 'sideMover'] as const).flatMap((seg) => [0, 1].map((d) => [seg, d] as const));
+  it.each(cases)('%s at d=%s', async (seg, d) => {
+    await initPhysics(); // addSafetyWalls asks the physics world about edges
+    let result = 'not built';
+    for (let seed = 1; seed < 40 && result !== 'ok'; seed++) {
+      const used: Segment[] = [];
+      const raw = generateLevel({ seed, name: seg, theme: 'meadow', length: 3, stars: 1, difficulty: d, weights: { [seg]: 3, straight: 1 }, onSegment: (s) => used.push(s) });
+      if (!raw || !used.includes(seg)) continue;
+      const level = addSafetyWalls(raw);
+      for (const p of level.pieces) if (p.type === 'star' && p.button) p.time = 60;
+      const risky = await race(level, { route: 'stars' }), safe = await race(level);
+      const checker = new MoveChecker(resolveLevel(level), 0);
+      const cheats = risky.updates.map((u) => checker.check(u, u.t + 40)).filter((c) => !c.ok).length;
+      result = risky.finished && !risky.falls && !cheats && risky.springs >= hops(seg) && risky.time < safe.time && safe.finished && !safe.falls ? 'ok'
+        : `seed ${seed}: risky finished=${risky.finished} falls=${risky.falls} springs=${risky.springs} time=${risky.time.toFixed(1)} cheats=${cheats} waypoint=${risky.waypoint}; safe finished=${safe.finished} falls=${safe.falls} time=${safe.time.toFixed(1)}`;
+      if (result !== 'ok') console.log(seg, d, result);
+    }
+    expect(result).toBe('ok');
   });
 });
 

@@ -125,14 +125,14 @@ describe('arenas', () => {
 });
 
 describe('complex courses and mazes', () => {
-  it('has 7 courses per theme, ending with a top-down maze and a downhill course', () => {
+  it('has 9 courses per theme, ending with a top-down maze and a downhill course', () => {
     const themes = ['meadow', 'candy', 'ice', 'night'];
-    expect(LEVELS).toHaveLength(28);
+    expect(LEVELS).toHaveLength(36);
     themes.forEach((theme, t) => {
-      const group = LEVELS.slice(t * 7, t * 7 + 7);
+      const group = LEVELS.slice(t * 9, t * 9 + 9);
       expect(group.every((l) => (l.theme ?? 'meadow') === theme)).toBe(true);
-      expect(group.map((l) => l.camera ?? 'chase')).toEqual(['chase', 'chase', 'chase', 'chase', 'chase', 'topdown', 'chase']);
-      expect(courseDrop(group[6])).toBeGreaterThanOrEqual(50); // summit to valley
+      expect(group.map((l) => l.camera ?? 'chase')).toEqual([...Array(7).fill('chase'), 'topdown', 'chase']);
+      expect(courseDrop(group[8])).toBeGreaterThanOrEqual(50); // summit to valley
     });
   });
 

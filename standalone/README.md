@@ -82,7 +82,7 @@ src/
   main.ts              game app: menu (bot demo in the background) → level select → race → results
   editor/              level editor (separate page: editor.html)
   cosmetics.ts         catalog: ball skins, hats, fur colors, trails (append only; referenced by index)
-  levels/themes.ts     world themes: sky, light, floor colors, floor grip (ice is slippery)
+  levels/themes.ts     world themes: sky, light, floor colors, tagline, and each world's one physics rule (meadow gusts, candy bounce, ice grip, night gravity)
   levels/generator.ts  course generator (segments → pieces + bot route): straights, ramps, turns, curves,
                        switchbacks, jumps, split paths, stairs, bridges, movers, sweepers;
                        downhill: steep plunges, corkscrews, cliff drops, cascades; combos, forks
@@ -181,12 +181,13 @@ Each generated race course tells a short story instead of repeating one idea. `s
 |---|---|---|---|
 | Intro | ~20% | The course's signature mechanic in its easiest form, with a breather after each | 0 → 0.2 |
 | Build-up | ~45% | The signature mixed with the course's other segments (`weights`); after two hard segments comes a breather | 0.25 → 0.7 |
-| Twist | ~20% | A risk/reward **fork**, then **combos** (two mechanics at once) | 0.6 → 0.85 |
+| Twist | ~20% | A risk/reward piece (`acts.risk`: a fork, split, paper walls or brake pad), then **combos** (two mechanics at once) | 0.6 → 0.85 |
 | Finale | last 1–2 | The signature mechanic at its hardest, right before the goal | 0.9 → 1 |
 
 - **Difficulty** sets each segment's numbers: bridges narrow, gaps widen, sweepers and belts speed up, crumbling tiles fall sooner, wind gets stronger. `d = 1` is about as hard as the bots can reliably manage.
 - **Combos:** `sweeperBelt` (a belt under a sweeping arm), `windCrumble` (crumbling tiles in a crosswind), `boostSpring` (spring onto a launch strip), `liftWind` (a lift up to a windy bridge), `bumperTreadmill` (climb a down-belt past bumpers), `crumbleJump` (a run-up that crumbles behind you).
 - **Forks:** a railed detour out to the side, or straight across a narrow beam or crumbling tiles with no safety walls. The risky line is about half as long.
+- **Spring shortcuts:** wherever you wait for a moving floor (`lift`, `wheel`, `mover`, `sideMover`), springs in a row beside it skip the wait (`springHops` in `generator.ts`). Each floating spring throws you onto the next; miss one and you fall. The bot `route` waits and `starRoute` takes the springs.
 - `npm run gen-levels` prints each course's plan, e.g. `springUp(0) → turn(0.2) → … → fork(0.6) → boostSpring(0.8) → springUp(0.9) → springUp(1)`.
 
 ## Stars
@@ -236,12 +237,20 @@ Every race course hides **3 stars**, and each one asks you to use the mechanic i
 
 ## Themes and cosmetics
 
-- **Themes:** set `"theme"` on a level: `meadow`, `candy`, `ice` (floors grip 30% as much) or `night`.
-- **Art direction, "the hamster's world":** courses are built from things a hamster finds around a house, and each theme is a place. Meadow is done (a garden); Candy (a kitchen counter), Ice (a freezer) and Night (a bedroom) still use the plain placeholder look.
-  - A theme's `look` (`src/levels/themes.ts`) says what each floor palette, rail, wall, bumper and sweeper is made of. In the garden: paving stones, lawn on soil, deck boards, painted toy boards, popsicle-stick rails, hedges, toadstool bumpers, pencil sweepers, crackers for crumbling tiles, and pennant checkpoints.
+- **Themes (worlds):** set `"theme"` on a level: `meadow`, `candy`, `ice` or `night`. Each is one feeling on the hamster's escape (`DESIGN.md` → The story) with one physics rule, set on the theme and applied by the simulation (`MECHANICS.md` → World rules):
+  - `gust` (meadow): wind volumes swell and ease on the clock (`gustAt()`); their streaks show it.
+  - `bounce` (candy): floors' restitution, so landings hop.
+  - `grip` (ice): floor friction × 0.3.
+  - `gravity` (night): × 0.85, also used by the generator's jump and spring arcs (`gravityOf()`).
+  - `tagline`: one line under the world's name on the level select.
+  - The first finish of the last course (Starfall Peak) plays a wordless ending beat (`playEnding()` in `main.ts`): the hamster curls up asleep and the camera drifts up to the stars. Any key skips it.
+- **Art direction, "the hamster's world":** courses are built from things a hamster finds around a house, and each world is a place the hamster believes is the outside. Meadow (the living room, seen as a meadow), Candy (a kitchen counter), Ice (the refrigerator's freezer) and Night (above the city on a heavenly night).
+  - A theme's `look` (`src/levels/themes.ts`) says what each floor palette, rail, wall, bumper and sweeper is made of. In the meadow: floorboards, a green shag rug on soil, toy boards, popsicle-stick rails, box hedges, toadstool bumpers, pencil sweepers, crackers for crumbling tiles, and pennant checkpoints. At night, bumpers are glowing mushrooms in turn of `bumper.colours`.
   - Textures are painted on canvas once (`src/render/surfaces.ts`) and tiled in world units across the merged meshes. Floor and rail sides darken towards the bottom via vertex colours.
-  - The sky is a world-locked painted panorama (`src/render/backdrop.ts`): gradient, sun glow, the lawn far below, and giant soft garden shapes around the horizon. It costs nothing extra to draw. Specks drift in the light (off on the low graphics setting), and a CSS vignette frames the picture.
+  - The sky is a world-locked painted panorama (`src/render/backdrop.ts`): gradient, sun glow, the floor far below, and giant soft shapes around the horizon (the living room's furniture and desk fan, the kitchen, the fridge, the city). It costs nothing extra to draw. Specks drift in the light (off on the low graphics setting), and a CSS vignette frames the picture.
   - The textures and shaders are prepared while the menu is idle (`src/render/prewarm.ts`), so a theme's first course doesn't stall.
+  - Icy surfaces (`GLOSS` in `surfaces.ts`) reflect the painted sky. A look with `cold` adds the ice feel in `main.ts` (`coldFeel`): steering across or against a slide throws up shavings with a scraping hiss, landings glint, and your breath puffs every couple of seconds.
+  - Night: fairy lights and star stickers glow (`EMISSIVE` in `surfaces.ts`: the texture is its own glow map), stars are painted all round the sky, and `Aurora` (`backdrop.ts`) draws live Lifestream-green aurora curtains around the ball, with a soft glow of them below the horizon, in one draw call (hidden on the low graphics setting, which keeps a painted one). Low-gravity zones in every theme are drifting, twinkling stardust (`stardustPoints` in `level-view.ts`: all zones in one GPU-animated Points mesh). A look's `trail` sheds stardust behind a fast or flying ball, `glints` sparkle on landings, and `chime` rings on big landings and springs.
   - Add a theme's look by giving it a `look`, plus any new surface kinds or backdrop shapes it needs.
 - **Game feel** (see `DESIGN.md`):
   - **Particles:** `src/render/effects.ts`, two fixed pools and two draw calls: dust, streaks, sparks, crumbs, sparkles and confetti.
@@ -349,6 +358,7 @@ To add a level, create `src/levels/<name>.json`, register it in `src/levels/inde
 - `moving-pieces.test.ts`: the iron ball waits until you land on it, rolls the way you push and goes back on a respawn; spikes send you back; wheel steps carry you up and stay level; gates block while up; logs sit on slopes; iron balls are only drawn for others near their rider; every motion reports the velocity it really moves at; turntables carry a resting ball and keep it in except at gaps; piano keys drop a waiting ball; pendulums and rollers knock the ball; rockers tip it to the low side; sliding bumpers kick from where they are now; paper stops a slow ball, tears for a fast one and mends on respawn; stars ride any moving piece; bots wait for a gap in a swinging pendulum whenever they arrive. `course.test.ts` runs each new segment (brake pad, pinball, keys, turntable, pendulum, rocker, rollers, paper walls, iron ball, spin wheel, trick gates, log slope) at difficulty 0 and 1 with careful, side-lane and slower bots setting off at different moments, and the server accepts every run.
 - `e2e/smoke.spec.ts` also plays the mechanic sandbox (`?sandbox=turntable`).
 - `e2e/multiplayer.spec.ts`: two browsers: create, join by invite link, ready, race, agree on live positions, leave; wrong room code shows a clear error; Quick Play lobby counts down and bots fill the race.
+- World rules: meadow wind gusts on the clock, candy floors bounce, night gravity is lighter (`world-rules.test.ts`).
 - Stars and pacing: stars are collected once, kept after a fall, reset on restart; riding stars stay in step with their mover or arm; switch stars show only while their timer runs, which survives a fall (`mechanics.test.ts`); every star-hiding segment hides its own kind of star, which the star route collects and the safe line doesn't (`course.test.ts`); stars use the course's mechanics first and never repeat a kind (`levels.test.ts`); every course has 3 stars and a star route that a bot finishes with all 3 and no falls (`course.test.ts`); star-route runs pass the server checks (`rules.test.ts`); courses run intro → build-up → twist → finale and get harder, forks have an open risky line (`levels.test.ts`); every combo segment builds and can be finished (`course.test.ts`).
 - `feedback.test.ts`: the run recorder (falls, sections, splits, restarts), layout versions, and the per-course feedback numbers; `meta.test.ts` checks the report includes them, and `e2e/smoke.spec.ts` rates a course in playtest mode, exports it, and answers the quit form.
 - `meta.test.ts`, `api.test.ts`: accounts and recovery, level curve, rewards (paid once per claim), buying and equipping, level unlocks, ad-double limits, purchases, challenges, solo replay checks (honest run, run with a fall, cheat, unfinished), leaderboards, the HTTP API, CORS, Stripe webhooks (valid, forged, stale, retried), multiplayer rewards, the analytics report.
@@ -372,7 +382,7 @@ Every course can collect feedback for tuning: what players think of it, and what
 ## Single-player version on GitHub Pages
 
 `npm run build:pages` builds a single-player version into `dist-pages/`. It needs no server:
-- **Included:** all 28 courses (with stars), Customize (everything unlocked except paid Starter Pack items), the level editor and Settings.
+- **Included:** all 36 courses (with stars), Customize (everything unlocked except paid Starter Pack items), the level editor and Settings.
 - **Left out:** Quick Play, rooms, the shop, leaderboards, accounts and analytics.
 - **Offline:** it makes no network requests, and asset paths are relative, so it works under `https://<you>.github.io/<repo>/`.
 - **Saved progress:** best times and your look are stored in the browser.

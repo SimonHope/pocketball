@@ -6,7 +6,7 @@ import type { Vec3 } from '../sim/math';
 // pools (additive light, and ordinary dust and flakes), each one THREE.Points: two draw calls
 // in all, however busy it gets, and no allocation per frame.
 
-export type Burst = 'dust' | 'streak' | 'spark' | 'crumbs' | 'splinters' | 'sparkle' | 'confetti';
+export type Burst = 'dust' | 'streak' | 'spark' | 'crumbs' | 'splinters' | 'sparkle' | 'confetti' | 'shavings' | 'breath' | 'glints' | 'stardust';
 
 export interface BurstOptions {
   /** 0..1+: how hard the hit was (scales count, speed and size). */
@@ -15,6 +15,8 @@ export interface BurstOptions {
   dir?: Vec3;
   /** Overrides the preset colour (dust takes the theme's). */
   color?: string;
+  /** Sparks: matte specks in these colours instead (sprinkles off a cupcake). */
+  colors?: string[];
 }
 
 const POOL = 220;
@@ -196,7 +198,7 @@ export class Effects {
   /** Particles alive in both pools (tests, stats). */
   get count() { return this.light.count + this.matte.count; }
 
-  burst(kind: Burst, at: Vec3, { strength = 0.5, dir = [0, 0, -1], color }: BurstOptions = {}) {
+  burst(kind: Burst, at: Vec3, { strength = 0.5, dir = [0, 0, -1], color, colors }: BurstOptions = {}) {
     const s = Math.max(0.2, Math.min(1.5, strength));
     const n = (base: number) => Math.max(1, Math.round(base * Effects.scale));
     const c = (hex: string) => this.color.set(hex);
@@ -224,7 +226,11 @@ export class Effects {
       case 'spark': {
         for (let i = 0, count = n(8 + 8 * s); i < count; i++) {
           const a = Math.atan2(dz, dx) + rand(-1.2, 1.2), sp = rand(6, 13) * (0.7 + s * 0.5);
-          this.light.emit(at, [Math.cos(a) * sp, rand(1, 5), Math.sin(a) * sp], c(color ?? '#fff3b0'), rand(0.2, 0.35), rand(0.25, 0.45), { drag: 2.5, gravity: 14 });
+          if (colors?.length) {
+            this.matte.emit(at, [Math.cos(a) * sp * 0.8, rand(3, 7), Math.sin(a) * sp * 0.8], c(colors[i % colors.length]), rand(0.18, 0.28), rand(0.6, 0.9), { drag: 1.5, gravity: 22 });
+          } else {
+            this.light.emit(at, [Math.cos(a) * sp, rand(1, 5), Math.sin(a) * sp], c(color ?? '#fff3b0'), rand(0.2, 0.35), rand(0.25, 0.45), { drag: 2.5, gravity: 14 });
+          }
         }
         break;
       }
@@ -252,6 +258,39 @@ export class Effects {
           const a = (i / count) * Math.PI * 2, r = rand(0.3, 0.9), up = rand(2, 4.5);
           this.light.emit([at[0] + Math.cos(a) * r, at[1] + rand(-0.3, 0.3), at[2] + Math.sin(a) * r], [Math.cos(a) * 2.2, up, Math.sin(a) * 2.2],
             c(color ?? '#ffd60a'), rand(0.35, 0.6), rand(0.6, 0.9), { drag: 2, star: true });
+        }
+        break;
+      }
+      case 'shavings': {
+        // Skidding on ice: shavings sprayed low off the ball's side, the way it's sliding (`dir`).
+        for (let i = 0, count = n(2 + 5 * s); i < count; i++) {
+          const a = Math.atan2(dz, dx) + rand(-0.5, 0.5), sp = rand(2, 6) * (0.6 + s);
+          this.matte.emit([at[0] + rand(-0.3, 0.3), at[1] + 0.1, at[2] + rand(-0.3, 0.3)], [Math.cos(a) * sp, rand(1, 3.5), Math.sin(a) * sp],
+            c(color ?? '#f2faff'), rand(0.12, 0.24), rand(0.3, 0.55), { gravity: 14, drag: 2 });
+        }
+        break;
+      }
+      case 'breath': {
+        // A little puff of breath in the cold, drifting ahead and up.
+        for (let i = 0, count = n(4); i < count; i++) {
+          this.matte.emit([at[0] + rand(-0.1, 0.1), at[1] + rand(-0.1, 0.1), at[2] + rand(-0.1, 0.1)], [(dx / dl) * rand(0.6, 1.2) + rand(-0.2, 0.2), rand(0.2, 0.5), (dz / dl) * rand(0.6, 1.2) + rand(-0.2, 0.2)],
+            c('#ffffff'), rand(0.3, 0.45), rand(0.7, 1), { drag: 1.5 });
+        }
+        break;
+      }
+      case 'glints': {
+        // Light caught where you land (ice, stardust).
+        for (let i = 0, count = n(3 + 5 * s); i < count; i++) {
+          this.light.emit([at[0] + rand(-1, 1), at[1] + rand(0.05, 0.3), at[2] + rand(-1, 1)], [rand(-0.5, 0.5), rand(0.3, 1), rand(-0.5, 0.5)],
+            c(color ?? '#ffffff'), rand(0.25, 0.4), rand(0.3, 0.5), { drag: 2, star: true });
+        }
+        break;
+      }
+      case 'stardust': {
+        // A few tiny stars shed behind the ball, drifting and fading: a comet's tail.
+        for (let i = 0, count = n(1 + 2 * s); i < count; i++) {
+          this.light.emit([at[0] - (dx / dl) * 0.9 + rand(-0.5, 0.5), at[1] + rand(-0.5, 0.5), at[2] - (dz / dl) * 0.9 + rand(-0.5, 0.5)],
+            [rand(-0.4, 0.4), rand(-0.1, 0.5), rand(-0.4, 0.4)], c(color ?? '#fff1b8'), rand(0.15, 0.32), rand(0.5, 0.9), { drag: 1.5, star: rand(0, 1) < 0.6 });
         }
         break;
       }

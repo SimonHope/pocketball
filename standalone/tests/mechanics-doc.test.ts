@@ -28,15 +28,15 @@ describe('MECHANICS.md', () => {
     const uses = new Map<string, Set<string>>();
     for (const t of TARGETS) {
       if (t.maze) continue;
-      for (const seg of [...Object.keys(t.weights), ...(t.acts ? [...t.acts.intro, ...t.acts.twist, ...t.acts.finale] : [])]) {
+      for (const seg of [...Object.keys(t.weights), ...(t.acts ? [...t.acts.intro, ...t.acts.twist, ...t.acts.finale, ...(t.acts.risk ?? ['fork'])] : [])]) {
         uses.set(seg, (uses.get(seg) ?? new Set()).add(t.name));
       }
     }
     const COURSES = 6; // the Courses column
     for (const row of segments) {
       const cell = row.cells[COURSES];
-      if (row.name === 'fork' || row.name === 'starSpur') {
-        expect(cell, row.name).toMatch(/^every /); // placed by the generator itself, on every course
+      if (row.name === 'starSpur') {
+        expect(cell, row.name).toMatch(/^every /); // the generator's fallback, on any course
         continue;
       }
       const listed = cell === '—' ? [] : cell.split(',').map((c) => c.trim());

@@ -27,18 +27,26 @@ import summitRun from './summit-run.json';
 import sugarMountain from './sugar-mountain.json';
 import frozenFalls from './frozen-falls.json';
 import starfallPeak from './starfall-peak.json';
+import toadstoolRing from './toadstool-ring.json';
+import conkerLane from './conker-lane.json';
+import lazySusan from './lazy-susan.json';
+import paperChase from './paper-chase.json';
+import iceFloes from './ice-floes.json';
+import brakePoint from './brake-point.json';
+import toyBox from './toy-box.json';
+import ironComet from './iron-comet.json';
 import candyBowl from './candy-bowl.json';
 import nightSummit from './night-summit.json';
 
-// Every race course, in order: 7 per theme (the level select groups them by theme). Add new
+// Every race course, in order: 9 per theme (the level select groups them by theme). Add new
 // JSON files here. Most were made with the level generator (npm run gen-levels) as starting
 // layouts for designers to refine in the editor. Each theme ends with a top-down maze and a
 // downhill course (a summit start, finishing 50+ units below).
 export const LEVELS: LevelData[] = [
-  warmUp, zigZag, sweeperAlley, rollingHills, switchbackRidge, hedgeMaze, summitRun,
-  candyHop, gumdropGauntlet, sugarRush, taffyTwist, lollipopLeap, candyLabyrinth, sugarMountain,
-  frostySlide, glacierRun, polarPlunge, avalanche, crystalCaverns, iceCatacombs, frozenFalls,
-  moonlitPath, starlightCircuit, midnightMaze, cometJump, nebulaSpiral, nightVault, starfallPeak,
+  warmUp, zigZag, sweeperAlley, toadstoolRing, rollingHills, switchbackRidge, conkerLane, hedgeMaze, summitRun,
+  candyHop, gumdropGauntlet, sugarRush, lazySusan, taffyTwist, lollipopLeap, paperChase, candyLabyrinth, sugarMountain,
+  frostySlide, glacierRun, polarPlunge, iceFloes, avalanche, crystalCaverns, brakePoint, iceCatacombs, frozenFalls,
+  moonlitPath, starlightCircuit, midnightMaze, toyBox, cometJump, nebulaSpiral, ironComet, nightVault, starfallPeak,
 ].map((json) => parseLevel(json));
 
 /** Arenas for the party modes (King of the Hill, Bumper Arena). */
@@ -59,15 +67,27 @@ export function courseDrop(level: LevelData): number {
 export function courseMechanics(level: LevelData): string[] {
   const has = (test: (p: LevelData['pieces'][number]) => boolean) => level.pieces.some(test);
   return [
+    // The newer set pieces first: they're what makes a course its own.
+    has((p) => p.type === 'ironball') && 'Iron ball',
+    has((p) => p.type === 'wheel') && 'Spin wheel',
+    has((p) => p.type === 'gate') && 'Trick gates',
+    has((p) => p.type === 'roller' && !!p.launcher) && 'Log launchers',
+    has((p) => p.type === 'turntable') && 'Turntables',
+    has((p) => p.type === 'pendulum') && 'Pendulums',
+    has((p) => p.type === 'rocker') && 'Rocking floors',
+    has((p) => p.type === 'mover' && !!p.hold) && 'Piano keys',
+    has((p) => p.type === 'paper') && 'Paper walls',
+    has((p) => p.type === 'bumper' && !!p.to) && 'Sliding toadstools',
+    has((p) => p.type === 'roller' && !p.launcher) && 'Rolling logs',
     has((p) => p.type === 'boost') && 'Boost pads',
     has((p) => p.type === 'spring') && 'Springs',
-    has((p) => p.type === 'mover' && p.from[1] !== p.to[1]) && 'Lifts',
+    has((p) => p.type === 'mover' && !p.hold && p.from[1] !== p.to[1]) && 'Lifts',
     has((p) => p.type === 'conveyor') && 'Belts',
     has((p) => p.type === 'crumble') && 'Crumbling floor',
     has((p) => p.type === 'wind' && p.dir[1] > 0.5) && 'Updrafts',
     has((p) => p.type === 'wind' && p.dir[1] <= 0.5) && 'Wind',
     has((p) => p.type === 'lowgrav') && 'Low gravity',
-  ].filter((m): m is string => !!m);
+  ].filter((m): m is string => !!m).slice(0, 3); // the card has room for three
 }
 
 /** The level with its stars taken out (multiplayer races don't have them). */

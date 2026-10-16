@@ -36,6 +36,9 @@ export class CameraRig {
   /** A short FOV punch (boosts, springs) and a dip on hard landings; both ease back. */
   private fovKick = 0;
   private dipBy = 0;
+  /** The last course's ending: drift up and look to the stars (0 = off, eases to 1). */
+  private gazing = false;
+  private gaze = 0;
   /** 1 = full motion effects, 0 = none (the "reduced motion" setting). */
   static motion = 1;
   private pos = new THREE.Vector3();
@@ -71,6 +74,12 @@ export class CameraRig {
     this.shake = Math.min(1, this.shake + amount * CameraRig.motion);
   }
 
+  /** Rise slowly and turn up to the sky (the very end of the journey). */
+  gazeUp(on = true) {
+    this.gazing = on;
+    if (!on) this.gaze = 0;
+  }
+
   snap(follow: Follow, yaw: number) {
     // Top-down keeps its heading on respawn so the map doesn't spin under you.
     if (this.mode !== 'top') this.yaw = yaw;
@@ -78,6 +87,7 @@ export class CameraRig {
     this.lift = 0;
     this.shake = 0;
     this.manualTimer = 0;
+    this.gazeUp(false);
     const { focus, desired } = this.target(follow);
     this.pos.copy(desired);
     this.focus.copy(focus);
@@ -103,6 +113,7 @@ export class CameraRig {
     // Rise when heading downhill or falling, dip slightly going uphill.
     const liftTarget = Math.min(s.maxLift, Math.max(-2, -v[1] * s.slopeLift));
     this.lift += (liftTarget - this.lift) * approach(3, dt);
+    this.gaze += ((this.gazing ? 1 : 0) - this.gaze) * approach(0.35, dt);
 
     const { focus, desired } = this.target(follow);
     const k = approach(VIEW.camera.followLerp, dt);
@@ -139,8 +150,10 @@ export class CameraRig {
     );
     const distance = s.distance + Math.min(s.maxZoom, this.speed * s.speedZoom);
     const desired = focus.clone().add(new THREE.Vector3(
-      Math.sin(this.yaw) * distance, s.height + this.lift, Math.cos(this.yaw) * distance,
+      Math.sin(this.yaw) * distance, s.height + this.lift + this.gaze * 6, Math.cos(this.yaw) * distance,
     ));
+    // Gazing: the view tips up past the ball, away from the camera, toward the stars.
+    if (this.gaze > 0.001) focus.add(new THREE.Vector3(-Math.sin(this.yaw) * 30, 40, -Math.cos(this.yaw) * 30).multiplyScalar(this.gaze));
     return { focus, desired };
   }
 }

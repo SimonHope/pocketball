@@ -4,7 +4,7 @@ import { BallView } from '../render/ball-view';
 import type { Follow } from '../render/camera';
 import { LevelView } from '../render/level-view';
 import { addClouds, addValley } from '../render/scene';
-import { addScenery, type Motes } from '../render/backdrop';
+import { addScenery, type Scenery } from '../render/backdrop';
 import { Effects } from '../render/effects';
 import { THEMES } from '../levels/themes';
 import { resolveLevel, type ResolvedLevel } from '../sim/geometry';
@@ -34,15 +34,15 @@ export class RaceSession {
   private stepsSinceGo = 0;
   private qa = new THREE.Quaternion();
   private qb = new THREE.Quaternion();
-  /** Themes with a look: specks drifting around the ball. */
-  private motes: Motes | null = null;
+  /** Themes with a look: specks drifting around the ball (and the night's aurora). */
+  private scenery: Scenery | null = null;
 
   constructor(private parent: THREE.Object3D, data: LevelData) {
     this.data = data;
     this.level = resolveLevel(data);
     this.sim = new Simulation(this.level);
     const theme = THEMES[this.level.theme];
-    if (theme.look) this.motes = addScenery(this.group, theme.look);
+    if (theme.look) this.scenery = addScenery(this.group, theme.look);
     else {
       addClouds(this.group, this.level);
       addValley(this.group, this.level);
@@ -92,7 +92,7 @@ export class RaceSession {
     this.ballView.update(pos, [rot.x, rot.y, rot.z, rot.w], this.sim.velocity(), dt, { grounded: this.sim.grounded });
     this.effects.update(dt);
     this.levelView.update(this.sim, dt);
-    this.motes?.update(pos, dt);
+    this.scenery?.update(pos, dt);
     return pos;
   }
 

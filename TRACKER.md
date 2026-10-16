@@ -3,14 +3,14 @@
 **Goal:** a commercial Hamsterball-style racer. Web launch first (own site + portals such as CrazyGames/Poki), then a Roblox port. Online rooms of 2–16 players you create and join with a code. Small team (2–4 people).
 
 **Full roadmap:** `~/.claude/plans/if-i-need-to-dazzling-oasis.md`
-**Last updated:** 2026-10-11
+**Last updated:** 2026-10-14
 
 ## Status at a glance
 
 | Milestone | Est. | Status |
 |---|---|---|
 | Prototype (pre-M0) | — | ✅ Done |
-| M0 Foundation | 2 wks | 🟡 Tech done; business tasks, first commit and hosting open |
+| M0 Foundation | 2 wks | 🟡 Tech done; business tasks, CI check on GitHub and hosting open |
 | M1 Single-player vertical slice | 6–8 wks | 🟡 Code side done; art, music and outside playtests open |
 | M2 Multiplayer core | 6–8 wks | 🟡 Code side done; needs a hosted server, human playtests and scaling past ~31 rooms per process |
 | M3 Content and modes | 8–10 wks | 🟡 Code side done; art, level polish and playtests open |
@@ -43,7 +43,7 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 - [x] 15 headless tests: level files, physics, race rules, and the autopilot finishing the whole course with zero falls
 - [x] GitHub Actions CI (`.github/workflows/ci.yml`): typecheck, lint, tests, build
 - [x] Checked in headless Chrome: loads with no console errors, countdown works, holding W reaches 80 km/h
-- [x] Git repo created (nothing committed yet)
+- [x] Git repo created; initial commit pushed to GitHub (`origin/main`)
 
 ### M1 Single-player vertical slice (code side)
 - [x] **Game shell:** main menu with a bot playing a course in the background, level select (best time and medal per course), pause, results screen (time, medal, personal best, target times, next/retry), loading screen
@@ -83,7 +83,7 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
   - Recovery after falling.
   - Result: all 8 bots in a crowd race finish (4 of 8 before).
 - [x] **4 themes** (Meadow, Candy, Ice, Night): sky, fog, light, floor colors and clouds; Ice floors grip 30% as much. There's a theme picker in the editor.
-- [x] **28 race courses** (7 per theme) + **2 arenas** (Candy Bowl, Night Summit).
+- [x] **36 race courses** (9 per theme) + **2 arenas** (Candy Bowl, Night Summit).
 - [x] **12 complex courses** (added 2026-09-25):
   - 8 generated courses (2 per theme) using new pieces: smooth curves with continuous rails, descending switchbacks, jumps over gaps, split paths around a pit, staircases, and gauntlets of spinning arms.
   - 4 **top-down mazes** (Hedge Maze, Candy Labyrinth, Ice Catacombs, Night Vault). They are carved grids with loops (several ways through), sweeper rooms, narrow bridges over pits, bumpers, and dead ends with no floor. Checkpoint gates make every ball pass over the checkpoints.
@@ -129,6 +129,12 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 - [x] **Mechanics catalog** (2026-10-10). `MECHANICS.md` lists every piece, segment and star kind, with what it asks of the player, what difficulty changes, where it's used, a "design space" map of player verbs to spot overlaps and gaps, and a checklist for adding new ones.
   - Its **On** column is live: the generator never places a switched-off segment or star kind.
   - A test keeps the file and the code in step. Course targets moved to `scripts/targets.ts`.
+- [x] **Spring shortcuts past the waits** (2026-10-11). Lifts, the wheel and both sliding platforms have springs in a row beside them (floating springs on small open blocks; each throws you onto the next). The careful line still waits; the star route takes the springs, so gold gets tighter where there are lifts (Switchback Ridge 118 → 76 s, Starlight Circuit 82 → 65 s). Watch in playtests whether that gold is still in reach.
+- [x] **Less repetition: forks and star spurs** (2026-10-11). The twist opens with a risk/reward piece chosen per course (fork, split, paper walls or a brake pad), so forks lead 11 of 32 courses instead of all of them. Forks themselves vary (beam, crumbling tiles, stepping stones, piano keys, sliding toadstools). Star spurs dropped from 7 courses to 1 and come in three shapes (plank, spring perch, stepping stones); the risk piece holds a star only when a course's own mechanics offer fewer than 4 star kinds. Stars now come from 30 different challenges, none used more than 7 times. Checkpoints are never closer than 20 units.
+- [x] **Night look: a rooftop on a heavenly night** (2026-10-12). Roof slates (some mossy), terracotta ridge tiles for the narrow beams, a painted blue sill and glittery roofing felt, brick sides; fairy-light rails that glow, zinc guttering for safety walls, night-light bumpers that flare when bumped, TV-aerial sweepers, and glow-in-the-dark star stickers for crumbling tiles. The sky: thousands of stars (above and below the horizon, so you're up among them), the Milky Way, the moon, rooftop silhouettes with lit windows and a far-off town; a live, shimmering Lifestream-green aurora with a blurry glow of it below the horizon (one draw call, off on low graphics). Low-gravity zones are now drifting, twinkling stardust (one draw call for all of them). Feel: stardust trailing behind you (more in the air), gold glints and a soft chime on big landings and springs, a sparkle as stickers peel. Frame times cheaper than the plain night look (22 ms vs 25–27 ms on the bench).
+- [x] **Ice look: the freezer** (2026-10-12). A frosted shelf, clear and grape ice cubes, frozen peas, fish-finger beams and thin ice for crumbling tiles (cracked, it breaks into ice chips with a crackle); ice-tray rails, ice-cream-scoop bumpers, ice-lolly sweepers, a freezer-seal belt. Icy surfaces reflect the sky. The panorama: tubs, peas, an ice-cube tray, fish fingers, lollies and pizza under an icicled ceiling, over a frosted rack. Feel: frost flakes falling, snow puffs and glints on landing, shavings and a scraping hiss when you steer against a slide, and the hamster's breath in the cold. Frame times as cheap as the plain ice look (21 ms vs 22–23 ms on the bench, +1 draw call).
+- [x] **Candy look: the kitchen counter** (2026-10-11). Painted worktop, shortbread, wafer, frosting and chocolate surfaces; candy-cane rails; cupcake bumpers; chocolate biscuit-stick sweepers; liquorice belts; a warm kitchen panorama (sweet jar, kettle, cereal box, mug, mixer, milk bottle, cake, toaster) over a tiled floor. Flour puffs on landings, sugar specks in the air, and sprinkles off bumps. Frame times as cheap as the plain look (17–19 ms on the bench).
+- [x] **The new mechanics in courses** (2026-10-11): 8 new courses, two per theme, built around them (Toadstool Ring, Conker Lane, Lazy Susan, Paper Chase, Ice Floes, Brake Point, Toy Box, Iron Comet), and the 4 courses that repeated another's signature refreshed (Rolling Hills → rollers, Polar Plunge → piano keys, Avalanche → log slope, Midnight Maze → trick gates). Every other course is unchanged.
 - [x] **New mechanics, batch 2** (2026-10-11): the iron ball (ride a giant sphere across spikes: it rolls on by itself and you steer and keep your balance, the first real-physics piece, synced to other players), a Ferris-wheel spin wheel up to a high ledge, trick gates (one open door at a time, all switching together) and a log slope (climb against logs rolling down, waiting in side bays). Each has its own star. Bots balance on the iron ball and ride wheel steps (`ride` waypoints). Not in any course yet.
 - [x] **New mechanics, batch 1** (2026-10-11). Eight new segments, each with its own star challenge, built after looking at how Fall Guys, Astro Bot, Mario 3D World and marble games design stages:
   - brake pad (stop exactly), pinball (sliding toadstools), piano keys (floors sinking in a wave), turntable (a lazy Susan with gaps in its rim), pendulum (conkers swinging across a bridge), rocker (a tipping ruler), rollers (rows of logs), paper walls (tear through at speed, or weave).
@@ -162,6 +168,12 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 - [x] **Cosmetics:** 7 ball skins, 7 hats, 7 fur colors, 6 trails; a Customize screen with a live preview; synced and validated in multiplayer; bots wear random looks.
 - [x] **Tests:** 134 unit and integration (including all 12 courses with outer-lane bots, a crowd race, all 4 modes end-to-end with server bots, and cosmetics sync) + 8 browser tests (Quick Play, Customize).
 - [x] **Load test** (`npm run loadtest -- 4 quick 2`): 4 Quick Play rooms with 28 server bots → about 12% of a core (about 3% per room, like a 16-human room); modes cycled correctly.
+- [x] **The story drives the worlds** (2026-10-14). The hamster is breaking free, and each world is one feeling: Meadow freedom, Candy joy, Ice endurance, Night peace (`DESIGN.md` → The story, Worlds).
+  - Each world has one physics rule on its theme: meadow wind gusts, candy floors bounce, ice grip (as before), night gravity × 0.85. The generator plans jumps and springs with the world's gravity.
+  - Course mixes follow the feeling: wind and wider bridges in Meadow; more springs and shorter courses in Candy; longer Ice courses with three hard sections between breathers and more breaking floors and wind; curves and air time at Night, with no gauntlet or pendulum finale. All 36 courses regenerated, so medal times changed.
+  - The backdrops reveal the truth: the meadow is the living room (sofa, lamp, TV, bookshelf, a desk fan), the freezer shows the fridge (milk, eggs, its light) and blows a blizzard, and the night is above a city with glowing mushrooms. Night bumpers are glowing mushrooms in four colours.
+  - A tagline under each world on the level select, and a wordless ending on the first finish of Starfall Peak (the hamster falls asleep; the camera drifts up to the stars).
+  - Spring hops now allow for drag and aim onto the spring, not its rim, and bots don't count a waypoint reached from high above it (both were margins that night's gravity exposed).
 
 ### M4 Accounts, progression, monetization (code side)
 - [x] **Guest accounts with no personal data:** a random token in the browser plus a recovery code to move devices; only hashes stored; restoring on a new device signs the old one out.
@@ -231,7 +243,7 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 ## ⏳ Left to do
 
 ### M0: remaining
-- [ ] **First commit and push to GitHub**, which turns CI on
+- [ ] **Merge and push the feature branch:** `courses-stars-feedback` holds 3 commits that aren't on `main` or GitHub yet. Then confirm CI is green on GitHub
 - [ ] **Deploy previews:** pick a host (Cloudflare Pages or Vercel) and deploy every branch automatically
 - [ ] **Name and trademark search.** The working name is now **Pocket Ball**. Don't use "Hamsterball" (Raptisoft's trademark). "Pocket ball" is also a common name for pool/billiards games, so check the name on the trademark databases, Steam, Roblox, the app stores and web portals before launch.
 - [ ] **Choose an art style** (reference board)
@@ -257,11 +269,14 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 - **Exit test:** 16-player races at 150 ms lag feel fair; one server handles 50+ rooms
 
 ### M3: Content and modes (remaining)
-- [ ] **Play the new mechanics in the sandbox** (brake pad, pinball, keys, turntable, pendulum, rocker, rollers, paper walls, iron ball, spin wheel, trick gates, log slope), then add them to courses in `scripts/targets.ts`, ideally so each course has a signature mechanic of its own, and regenerate.
+- [ ] **Playtest the world rules:** can players feel and read the meadow gusts (period 4 s, 0.55× to 1×), is the candy bounce fun rather than fiddly (restitution 0.5), and does night's 0.85× gravity feel peaceful? Tune `gust`, `bounce` and `gravity` in `themes.ts`, then regenerate.
+- [ ] **Check the ending lands:** watch players reach the Starfall Peak ending. Does it read as warm and open, never sad? Is 7 s right?
+- [ ] **Final art for the story:** the living room, fridge and city backdrops are painted placeholders, like the rest.
+- [ ] **Playtest the 12 new and refreshed courses** (Toadstool Ring, Conker Lane, Lazy Susan, Paper Chase, Ice Floes, Brake Point, Toy Box, Iron Comet; Rolling Hills, Polar Plunge, Avalanche, Midnight Maze), especially the ice ones (low grip with rockers, keys and brake pads) and Iron Comet (the hardest).
 - [ ] **Playtest the pacing and stars:** do intros feel too easy, finales too hard? Are forks tempting, and stars worth the detour? Tune the act shares and difficulty ranges in `planSlots` (`src/levels/generator.ts`) and the per-segment `mix(...)` values.
-- [ ] **Playtest the star challenges:** the switch-star timers (1.2× the bot's time) and the riding-star catches are tuned for bots; check they feel fair but not free for players. Treadmills, `sweeperBelt` and `slalom` still offer no star; 8 courses still use one spur.
+- [ ] **Playtest the star challenges:** the switch-star timers (1.2× the bot's time) and the riding-star catches are tuned for bots; check they feel fair but not free for players. Treadmills, `sweeperBelt` and `slalom` still offer no star; 1 course still uses a spur.
 - [ ] **Stars beyond the browser:** count them on the server (the solo replay already has the path), pay XP for them, add "collect N stars" daily challenges, and decide on stars in multiplayer.
-- [ ] **Polish the 17 generated courses and 4 mazes** in the editor. They're playable and bot-verified, but generic. The generator now makes curves, jumps and split paths; hand-made set pieces are still missing.
+- [ ] **Polish the 32 generated courses (3 built on hand-made bases) and 4 mazes** in the editor. They're playable and bot-verified, but generic. The generator now makes curves, jumps and split paths; hand-made set pieces are still missing.
 - [ ] **Check course length with players:** most races now take 40–100 s. Elimination (up to 7 rounds) could run long, so consider shorter courses for Elimination or fewer rounds.
 - [ ] **Tune the mechanics with players:** boost speed, spring power, belt pull, crumble timing, wind strength, low gravity. All values are in `SIM` or on the pieces.
 - [ ] **Decide on crumbling tiles in multiplayer:** each client only sees its own tiles fall (not synced). Fine for racing; sync them if players find it confusing.
@@ -290,7 +305,7 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 - [ ] **Portal accounts and submission:** CrazyGames first, then itch.io. Check the SDK calls against current portal docs.
 - [ ] **Going wider than one machine:** Postgres instead of SQLite, plus per-machine WebSocket routing. Only needed if one large machine isn't enough; see deploy.md.
 - [ ] **Uptime alerts** (BetterStack or UptimeRobot on `/api/health`) and backups (Litestream or volume snapshots, with a restore test).
-- [ ] **Load levels as needed:** not needed yet (all 14 levels add a few KB); revisit when final art adds heavy models or textures.
+- [ ] **Load levels as needed:** not needed yet (all 38 levels, 36 race courses and 2 arenas, add a few KB); revisit when final art adds heavy models or textures.
 - **Exit test:** at least 25–30% of players come back the next day; servers stable
 
 ### M6: Web launch and live ops
@@ -331,6 +346,8 @@ Target: web launch about 10–11 months after M0, Roblox about 14 months. Add ab
 ## Decisions log
 | Date | Decision | Why |
 |---|---|---|
+| 2026-10-14 | The hamster's escape is the story; each world is a feeling with one physics rule, and its backdrop shows it's still the house | Gives the worlds a reason to differ in play, not just in look; one rule each stays readable. Night stays open (escape, dream or last moment) and never says which |
+| 2026-10-11 | New mechanics go into new courses; existing courses change only where they repeated another's signature | Courses that are already unique keep their feel and medal times; new courses have room to build around the mechanics |
 | 2026-10-11 | The iron ball is a real sphere with real physics, one per player, its position sent to the others | Balancing is the mechanic, so it can't be clock-driven; Roblox has Ball parts; others need to see what you're riding |
 | 2026-10-11 | Moving pieces are pure functions of the sim clock; bots time them by looking ahead (`timed` waypoints) | The same for every player and in the server's replays, and bots can predict them exactly instead of reacting |
 | 2026-10-11 | New mechanics are tried in a sandbox before they go into courses | Prototype alone first (as Astro Bot does), and don't churn course layouts and medal times for ideas that may not survive |

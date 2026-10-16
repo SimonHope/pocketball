@@ -87,6 +87,9 @@ export class BallView {
   private lastVelocity: Vec3 | null = null;
   private dizzyLeft = 0;
   private cheerLeft = 0;
+  /** The last course's ending: curled up asleep in the ball (0 = awake, eases to 1). */
+  private sleeping = false;
+  private curl = 0;
   private hamster: THREE.Group;
   private feet: Foot[];
   private hamsterYaw = Math.PI; // hamster's local +z is its face; courses run toward -z
@@ -246,6 +249,16 @@ export class BallView {
     this.cheerLeft = 1.5;
   }
 
+  /** The very end of the journey: once the cheer is over, curl up and fall asleep. */
+  sleep() {
+    this.sleeping = true;
+  }
+
+  wake() {
+    this.sleeping = false;
+    this.curl = 0;
+  }
+
   private react(velocity: Vec3, dt: number, state: BallState) {
     this.squashSpring.step(dt);
     this.popSpring.step(dt);
@@ -267,6 +280,12 @@ export class BallView {
     this.lastVelocity = [velocity[0], velocity[1], velocity[2]];
     this.dizzyLeft = Math.max(0, this.dizzyLeft - dt);
     this.cheerLeft = Math.max(0, this.cheerLeft - dt);
+    const curl = this.sleeping && this.cheerLeft === 0 ? 1 : 0;
+    this.curl += (curl - this.curl) * (1 - Math.exp(-1.5 * dt)); // slowly: settling down, not a flop
+    if (this.curl > 0.001) {
+      const round = 1 + this.curl * 0.12; // curled into a ball: lower and a little rounder
+      this.hamster.scale.set(this.hamster.scale.x * round, this.hamster.scale.y * (1 - this.curl * 0.35), this.hamster.scale.z * round);
+    }
   }
 
   update(position: Vec3, rotation: Quat, velocity: Vec3, dt: number, state: BallState = { grounded: true }) {
@@ -296,10 +315,10 @@ export class BallView {
     this.hamster.position.set(position[0], position[1] - SIM.ball.radius + 0.06 + bob, position[2]);
     const wobble = this.dizzyLeft > 0 ? Math.sin(this.dizzyLeft * 26) * 0.35 * this.dizzyLeft : 0;
     const spin = this.cheerLeft > 0 ? (1 - this.cheerLeft / 1.5) * Math.PI * 2 : 0;
-    this.hamster.rotation.set(this.lean.x, this.hamsterYaw + spin, -this.lean.y + wobble, 'YXZ');
+    this.hamster.rotation.set(this.lean.x + this.curl * 0.45, this.hamsterYaw + spin, -this.lean.y + wobble, 'YXZ'); // asleep: head tucked down
     this.feet.forEach((f, i) => {
       const phase = this.stride + (i % 2 === 0 ? 0 : Math.PI) + (i < 2 ? 0 : Math.PI / 2);
-      f.mesh.position.z = f.baseZ + (running ? Math.sin(phase) * (air ? 0.16 : 0.1) : 0);
+      f.mesh.position.z = f.baseZ + (running && this.curl < 0.5 ? Math.sin(phase) * (air ? 0.16 : 0.1) : 0);
     });
   }
 }

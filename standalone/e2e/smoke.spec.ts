@@ -14,7 +14,7 @@ test('menu → race → pause → quit', async ({ page }) => {
   await expect(page.locator('#menu')).toBeVisible();
 
   await page.click('[data-action=play]');
-  await expect(page.locator('.level-card')).toHaveCount(28);
+  await expect(page.locator('.level-card')).toHaveCount(36);
   await page.locator('.level-card').first().click();
   await expect(page.locator('#level')).toHaveText('Warm-Up');
 
@@ -39,7 +39,7 @@ test('level select: maps by theme; mazes start top-down and C cycles cameras', a
   const errors = watchErrors(page);
   await page.goto('/');
   await page.click('[data-action=play]');
-  await expect(page.locator('#level-list .level-group')).toHaveText(['Meadow', 'Candy', 'Ice', 'Night']);
+  await expect(page.locator('#level-list .level-group')).toHaveText([/^Meadow/, /^Candy/, /^Ice/, /^Night/]); // each followed by its tagline
   // Every card has a drawn map (some non-transparent pixels).
   const drawn = await page.locator('.level-card canvas.map').evaluateAll((maps) => maps.map((c) => {
     const { data } = (c as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 320, 200);
@@ -47,7 +47,7 @@ test('level select: maps by theme; mazes start top-down and C cycles cameras', a
     for (let i = 3; i < data.length; i += 4) if (data[i] > 0) n++;
     return n;
   }));
-  expect(drawn).toHaveLength(28);
+  expect(drawn).toHaveLength(36);
   expect(Math.min(...drawn)).toBeGreaterThan(2000);
   await expect(page.locator('.level-card .tag', { hasText: 'Top-down' })).toHaveCount(4);
   await expect(page.locator('.level-card', { hasText: 'Summit Run' }).locator('.tag')).toHaveText(/Downhill ↓\d+ m/);
@@ -198,8 +198,7 @@ test('solo run (playtest mode): collects the stars, asks for feedback, and the s
   await expect(page.locator('#banner')).toHaveText('GO!', { timeout: 8000 });
   await page.evaluate(() => (window as unknown as { __autopilot?: (route: string) => void }).__autopilot?.('stars'));
   await expect(page.locator('#stars')).toHaveText('★☆☆', { timeout: 60_000 });
-  // Warm-Up's fork has a switch star: its timer shows once the bot rolls over the button.
-  await expect(page.locator('#star-timer')).toContainText('⏱', { timeout: 90_000 });
+  await expect(page.locator('#stars')).toHaveText('★★☆', { timeout: 90_000 });
   // Playtest mode: the feedback form comes first, then the results.
   await expect(page.locator('#feedback')).toBeVisible({ timeout: 120_000 });
   await expect(page.locator('#fb-title')).toHaveText('How was Warm-Up?');
@@ -238,7 +237,7 @@ test('playtest mode: quitting asks why; without it, quitting just leaves', async
   const quitMidRun = async () => {
     await page.click('[data-action=play]');
     await page.locator('.level-card').nth(1).click();
-    await expect(page.locator('#banner')).toHaveText('GO!', { timeout: 6000 });
+    await expect(page.locator('#banner')).toHaveText('GO!', { timeout: 10_000 });
     await page.keyboard.down('KeyW');
     await page.waitForTimeout(600);
     await page.keyboard.up('KeyW');
